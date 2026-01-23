@@ -85,6 +85,18 @@ The following are **out of scope by design**:
 
 ---
 
+## 5.1 Repository Structure (Initial)
+
+The repository SHALL use a monorepo layout with the following top-level directories:
+
+* `backend/` — Python backend service
+* `bot/` — Python bot service
+* `frontend/` — Vue 3 + Vite + TypeScript frontend
+* `infra/` — Infrastructure scaffolding
+* `docs/` — Documentation
+
+---
+
 ## 6. Payment & Escrow Model
 
 ### Currency
@@ -280,6 +292,12 @@ Mandatory:
 * clear README with setup & architecture
 
 UI polish is **not optional**.
+
+### Tooling Conventions
+
+* Python projects use Poetry for dependency management.
+* Frontend uses npm for dependency management.
+* Root Makefile provides `help`, `dev`, `lint`, and `test` targets.
 
 ---
 

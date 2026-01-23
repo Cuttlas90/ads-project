@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "ads-bot"
+version = "0.1.0"
+description = "Bot service scaffold"
+authors = ["Telegram Ads Marketplace"]
+packages = [{ include = "app" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.0.0"
+ruff = "^0.6.0"
+pytest = "^8.0.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
