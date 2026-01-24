@@ -7,6 +7,10 @@ packages = [{ include = "app" }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
+fastapi = "^0.111.0"
+uvicorn = { version = "^0.30.0", extras = ["standard"] }
+celery = "^5.4.0"
+redis = "^5.0.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^24.0.0"
