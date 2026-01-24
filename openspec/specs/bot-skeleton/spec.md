@@ -11,9 +11,9 @@ The bot service SHALL include a Poetry-managed `bot/pyproject.toml` with develop
 - **THEN** black, ruff, and pytest are listed as development dependencies
 
 ### Requirement: Bot package layout
-The bot service SHALL include `bot/app/__init__.py` with no application logic.
+The bot service SHALL include `bot/app/__init__.py` and a minimal `bot/app/main.py` entrypoint with no business logic.
 
 #### Scenario: Minimal bot package
-- **WHEN** a developer opens the bot package file
-- **THEN** only package initialization is present and no business logic exists
+- **WHEN** a developer opens the bot package files
+- **THEN** only package initialization and the minimal entrypoint are present
 
