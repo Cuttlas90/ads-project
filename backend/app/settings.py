@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str | None = None
     CELERY_RESULT_BACKEND: str | None = None
     TELEGRAM_BOT_TOKEN: str | None = None
+    TELEGRAM_API_ID: int | None = None
+    TELEGRAM_API_HASH: str | None = None
+    TELEGRAM_ENABLED: bool = True
+    TELEGRAM_SESSION_NAME: str = "tgads_backend"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
