@@ -8,16 +8,16 @@ help:
 
 dev:
 	@echo "Frontend: cd frontend && npm install && npm run dev"
-	@echo "Backend:  cd backend  && poetry install"
-	@echo "Bot:      cd bot      && poetry install"
+	@echo "Backend:  cd backend  && uv pip install --system -e . --group dev"
+	@echo "Bot:      cd bot      && uv pip install --system -e . --group dev"
 
 lint:
 	@echo "Running linters if configured..."
-	@if command -v poetry >/dev/null 2>&1; then \
-		(cd backend && poetry run ruff .) || echo "Backend lint skipped (install deps first)."; \
-		(cd bot && poetry run ruff .) || echo "Bot lint skipped (install deps first)."; \
+	@if command -v ruff >/dev/null 2>&1; then \
+		(cd backend && ruff .) || echo "Backend lint skipped (install deps first)."; \
+		(cd bot && ruff .) || echo "Bot lint skipped (install deps first)."; \
 	else \
-		echo "Poetry not found. Install Poetry to run Python lint."; \
+		echo "ruff not found. Install with: cd backend && uv pip install --system -e . --group dev"; \
 	fi
 	@if command -v npm >/dev/null 2>&1; then \
 		echo "Frontend lint not configured yet."; \
@@ -28,11 +28,11 @@ lint:
 
 test:
 	@echo "Running tests if configured..."
-	@if command -v poetry >/dev/null 2>&1; then \
-		(cd backend && poetry run pytest) || echo "Backend tests skipped (install deps first)."; \
-		(cd bot && poetry run pytest) || echo "Bot tests skipped (install deps first)."; \
+	@if command -v pytest >/dev/null 2>&1; then \
+		(cd backend && pytest) || echo "Backend tests skipped (install deps first)."; \
+		(cd bot && pytest) || echo "Bot tests skipped (install deps first)."; \
 	else \
-		echo "Poetry not found. Install Poetry to run Python tests."; \
+		echo "pytest not found. Install with: cd backend && uv pip install --system -e . --group dev"; \
 	fi
 	@if command -v npm >/dev/null 2>&1; then \
 		echo "Frontend tests not configured yet."; \

@@ -295,7 +295,7 @@ UI polish is **not optional**.
 
 ### Tooling Conventions
 
-* Python projects use Poetry for dependency management.
+* Python projects use uv with PEP 621 `pyproject.toml` and `dependency-groups` for dependency management.
 * Frontend uses npm for dependency management.
 * Root Makefile provides `help`, `dev`, `lint`, and `test` targets.
 

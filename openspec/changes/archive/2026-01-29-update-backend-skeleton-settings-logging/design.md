@@ -16,7 +16,7 @@ The backend skeleton is a single-file FastAPI app with an inline /health endpoin
 - Default DATABASE_URL and REDIS_URL to the current compose .env.example values; derive Celery URLs from REDIS_URL unless explicitly set.
 - Configure logging once in backend/app/logging.py using the LOG_LEVEL setting and keep uvicorn loggers aligned to that level.
 - Introduce a root APIRouter in backend/app/api/router.py and include the health route from backend/app/api/routes/health.py.
-- Keep the package layout minimal; no extra modules (e.g., deps/) unless later requirements demand them.
+- Add a minimal backend/app/api/deps.py to centralize dependency helpers (e.g., settings) for future routes.
 
 ## Risks / Trade-offs
 - Health no longer reflects database connectivity; this is intentional for the skeleton but reduces operational signal.

@@ -1,19 +1,11 @@
-# bot-skeleton Specification
+## RENAMED Requirements
+- FROM: `### Requirement: Bot Poetry scaffold`
+- TO: `### Requirement: Bot dependency scaffold`
 
-## Purpose
-TBD - created by archiving change add-monorepo-skeleton. Update Purpose after archive.
-## Requirements
-### Requirement: Bot package layout
-The bot service SHALL include `bot/app/__init__.py` and a minimal `bot/app/main.py` entrypoint with no business logic.
-
-#### Scenario: Minimal bot package
-- **WHEN** a developer opens the bot package files
-- **THEN** only package initialization and the minimal entrypoint are present
-
+## MODIFIED Requirements
 ### Requirement: Bot dependency scaffold
 The bot service SHALL include a PEP 621 `bot/pyproject.toml` with `[project]` metadata and `[dependency-groups]`. The `dev` dependency group SHALL include black, ruff, and pytest. Poetry-specific sections MUST NOT be required for managing bot dependencies.
 
 #### Scenario: Bot dependencies present
 - **WHEN** a developer inspects `bot/pyproject.toml`
 - **THEN** the file defines `[project]` metadata and a `dev` dependency group containing black, ruff, and pytest
-

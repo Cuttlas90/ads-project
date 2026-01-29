@@ -1,8 +1,16 @@
 from fastapi import FastAPI
 
-app = FastAPI()
+from app.api.router import api_router
+from app.logging import configure_logging
+from app.settings import get_settings
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "database": "connected"}
+def create_app() -> FastAPI:
+    settings = get_settings()
+    configure_logging(settings)
+    app = FastAPI(title=settings.APP_NAME)
+    app.include_router(api_router)
+    return app
+
+
+app = create_app()

@@ -26,7 +26,7 @@ The backend service SHALL define a root APIRouter in backend/app/api/router.py a
 
 ## MODIFIED Requirements
 ### Requirement: Backend package layout
-The backend service SHALL include backend/app/__init__.py and backend/tests/__init__.py, plus minimal entrypoints in backend/app/main.py and backend/app/worker/celery_app.py. The backend package SHALL include backend/app/settings.py, backend/app/logging.py, backend/app/api/__init__.py, backend/app/api/router.py, backend/app/api/routes/__init__.py, and backend/app/api/routes/health.py to wire the FastAPI app, configuration, logging, and the /health route. No additional business logic is permitted in the skeleton.
+The backend service SHALL include backend/app/__init__.py and backend/tests/__init__.py, plus minimal entrypoints in backend/app/main.py and backend/app/worker/celery_app.py. The backend package SHALL include backend/app/settings.py, backend/app/logging.py, backend/app/api/__init__.py, backend/app/api/router.py, backend/app/api/deps.py, backend/app/api/routes/__init__.py, and backend/app/api/routes/health.py to wire the FastAPI app, configuration, logging, and the /health route. No additional business logic is permitted in the skeleton.
 
 #### Scenario: Minimal backend package
 - **WHEN** a developer opens the backend package files

@@ -5,6 +5,7 @@ The backend currently exposes a single inline health endpoint with no settings, 
 
 ## What Changes
 - Add a small app package layout with API router and health route modules.
+- Add a dedicated deps module for dependency wiring (kept minimal for now).
 - Introduce Pydantic Settings-based configuration with defaults aligned to the compose .env values.
 - Centralize logging configuration and wire it into application startup.
 - Update the /health response to return only {"status": "ok"} without database checks.
