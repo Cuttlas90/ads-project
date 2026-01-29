@@ -3,13 +3,25 @@
 This repository contains the skeleton for a monorepo that will power a Telegram ads marketplace.
 
 ## Repository structure
-- `backend/` — Python backend service (FastAPI later; skeleton only for now)
+- `backend/` — Python FastAPI backend skeleton (includes `/health`)
 - `bot/` — Python bot service (skeleton only for now)
 - `frontend/` — Vue 3 + Vite + TypeScript frontend (skeleton only for now)
-- `infra/` — Infrastructure scaffolding (empty placeholder for now)
+- `infra/` — Docker Compose stack for local development
 - `docs/` — Project documentation
 
 ## Quick start
+
+## Prerequisites
+- Python 3.11+
+- uv
+- Docker (for local dev stack)
+- Node.js + npm (for frontend)
+
+### Local dev stack (Docker)
+```bash
+cp .env.example .env
+docker compose --env-file .env -f infra/docker-compose.yml up --build
+```
 
 ### Frontend
 ```bash
@@ -18,13 +30,18 @@ npm install
 npm run dev
 ```
 
-### Backend / Bot (Poetry)
+### Backend / Bot (uv)
 ```bash
 cd backend
-poetry install
+uv pip install -e . --group dev
 
 cd ../bot
-poetry install
+uv pip install -e . --group dev
+```
+
+### Health check
+```bash
+curl http://localhost:8000/health
 ```
 
 ## Tooling

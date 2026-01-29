@@ -1,22 +1,29 @@
-[tool.poetry]
+[project]
 name = "ads-backend"
 version = "0.1.0"
 description = "Backend service scaffold"
-authors = ["Telegram Ads Marketplace"]
-packages = [{ include = "app" }]
+authors = [{ name = "Telegram Ads Marketplace" }]
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.30.0",
+    "celery>=5.4.0",
+    "redis>=5.0.0",
+    "pydantic-settings>=2.2.1",
+    "httpx>=0.28.1",
+]
 
-[tool.poetry.dependencies]
-python = "^3.11"
-fastapi = "^0.111.0"
-uvicorn = { version = "^0.30.0", extras = ["standard"] }
-celery = "^5.4.0"
-redis = "^5.0.0"
-
-[tool.poetry.group.dev.dependencies]
-black = "^24.0.0"
-ruff = "^0.6.0"
-pytest = "^8.0.0"
+[dependency-groups]
+dev = [
+    "black>=24.0.0",
+    "ruff>=0.6.0",
+    "pytest>=8.0.0",
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
