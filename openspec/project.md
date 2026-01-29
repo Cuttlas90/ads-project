@@ -93,6 +93,7 @@ The repository SHALL use a monorepo layout with the following top-level director
 * `bot/` — Python bot service
 * `frontend/` — Vue 3 + Vite + TypeScript frontend
 * `infra/` — Infrastructure scaffolding
+* `shared/` — Shared Python modules for backend/bot (DB models/session)
 * `docs/` — Documentation
 
 ---

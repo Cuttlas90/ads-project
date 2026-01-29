@@ -1,10 +1,11 @@
-.PHONY: help dev lint test
+.PHONY: help dev lint test test-db
 
 help:
 	@echo "Available commands:"
 	@echo "  make dev   - Print instructions for running services"
 	@echo "  make lint  - Run available linters (safe no-op if not configured)"
 	@echo "  make test  - Run available tests (safe no-op if not configured)"
+	@echo "  make test-db - Start Postgres via Docker and run backend DB tests"
 
 dev:
 	@echo "Frontend: cd frontend && npm install && npm run dev"
@@ -40,3 +41,16 @@ test:
 		echo "npm not found. Install Node.js to run frontend tooling."; \
 	fi
 	@true
+
+test-db:
+	@if [ ! -f .env ]; then echo "Missing .env. Run: cp .env.example .env"; exit 1; fi
+	@if ! command -v docker >/dev/null 2>&1; then echo "docker not found. Install Docker first."; exit 1; fi
+	@if ! command -v pytest >/dev/null 2>&1; then echo "pytest not found. Install with: cd backend && uv pip install --system -e . --group dev"; exit 1; fi
+	@echo "Starting postgres container..."
+	@docker compose --env-file .env -f infra/docker-compose.yml up -d postgres
+	@echo "Running backend DB tests..."
+	@DATABASE_URL=$${DATABASE_URL:-postgresql+psycopg://ads:ads@localhost:5433/ads} \
+		PYTHONPATH=$(PWD) \
+		(cd backend && pytest tests/test_db.py)
+	@echo "Stopping postgres container..."
+	@docker compose --env-file .env -f infra/docker-compose.yml stop postgres

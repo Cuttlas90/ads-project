@@ -7,6 +7,7 @@ This repository contains the skeleton for a monorepo that will power a Telegram 
 - `bot/` — Python bot service (skeleton only for now)
 - `frontend/` — Vue 3 + Vite + TypeScript frontend (skeleton only for now)
 - `infra/` — Docker Compose stack for local development
+- `shared/` — Shared Python modules (DB models/session) used by backend and bot
 - `docs/` — Project documentation
 
 ## Quick start
@@ -39,6 +40,19 @@ cd ../bot
 uv pip install -e . --group dev
 ```
 
+### Shared module (local runs)
+If you run backend or bot outside Docker, ensure the repo root is on `PYTHONPATH` so `shared/` imports resolve:
+```bash
+export PYTHONPATH="$(pwd)"
+```
+
+### Alembic (backend)
+```bash
+cd backend
+alembic -c alembic.ini upgrade head
+alembic -c alembic.ini revision --autogenerate -m "describe_change"
+```
+
 ### Health check
 ```bash
 curl http://localhost:8000/health
@@ -50,3 +64,4 @@ Root Makefile commands:
 - `make dev` — prints guidance for running services
 - `make lint` — run configured linters if available
 - `make test` — run configured tests if available
+- `make test-db` — start Postgres via Docker and run backend DB tests

@@ -1,0 +1,11 @@
+## 1. Implementation
+- [x] 1.1 Add SQLModel, SQLAlchemy, and Alembic dependencies to `backend/pyproject.toml` (and bot dependencies if needed for shared imports).
+- [x] 1.2 Create a root-level `shared/` database module (`shared/db/__init__.py`, `base.py`, `session.py`, `models/users.py`) using SQLModel and a sync engine.
+- [x] 1.3 Update backend to import the shared DB module and expose `get_db` via `backend/app/api/deps.py`.
+- [x] 1.4 Update bot to import the shared DB module where database access is needed.
+- [x] 1.5 Update Dockerfiles and `infra/docker-compose.yml` to mount `shared/` and set `PYTHONPATH` for backend, worker, and bot containers.
+- [x] 1.6 Scaffold Alembic (`backend/alembic.ini`, `backend/alembic/env.py`, `backend/alembic/versions/`) and wire to settings + shared SQLModel metadata.
+- [x] 1.7 Create the initial migration for the `users` table.
+- [x] 1.8 Add integration tests for the `get_db` session lifecycle and Alembic metadata detection (Docker Postgres required), plus a bot import smoke test.
+- [x] 1.9 Update any developer docs/README with basic Alembic usage and shared module notes if needed.
+- [x] 1.10 Run `pytest` for backend/bot tests and capture results.

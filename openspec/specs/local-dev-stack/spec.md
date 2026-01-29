@@ -24,3 +24,10 @@ The root `.env.example` SHALL include `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_
 - **WHEN** a developer opens `.env.example`
 - **THEN** the compose-related variables and placeholders are listed
 
+### Requirement: Shared module available in dev containers
+The local Docker Compose stack SHALL mount the root `shared/` directory into backend, worker, and bot containers and set `PYTHONPATH` so those services can import the shared module.
+
+#### Scenario: Shared imports in dev stack
+- **WHEN** a developer starts the local dev stack
+- **THEN** backend, worker, and bot can import the shared database module without manual path tweaks
+
