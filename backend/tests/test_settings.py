@@ -9,6 +9,7 @@ _ENV_KEYS = [
     "REDIS_URL",
     "CELERY_BROKER_URL",
     "CELERY_RESULT_BACKEND",
+    "TELEGRAM_BOT_TOKEN",
 ]
 
 
@@ -25,6 +26,7 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.REDIS_URL == "redis://redis:6379/0"
     assert settings.CELERY_BROKER_URL == settings.REDIS_URL
     assert settings.CELERY_RESULT_BACKEND == settings.REDIS_URL
+    assert settings.TELEGRAM_BOT_TOKEN is None
 
 
 def test_settings_overrides(monkeypatch) -> None:
@@ -35,6 +37,7 @@ def test_settings_overrides(monkeypatch) -> None:
         "DATABASE_URL": "postgresql+psycopg://user:pass@localhost:5432/db",
         "REDIS_URL": "redis://localhost:6379/1",
         "CELERY_RESULT_BACKEND": "redis://localhost:6379/2",
+        "TELEGRAM_BOT_TOKEN": "test-token",
     }
 
     for key, value in overrides.items():
@@ -49,6 +52,7 @@ def test_settings_overrides(monkeypatch) -> None:
     assert settings.REDIS_URL == overrides["REDIS_URL"]
     assert settings.CELERY_BROKER_URL == overrides["REDIS_URL"]
     assert settings.CELERY_RESULT_BACKEND == overrides["CELERY_RESULT_BACKEND"]
+    assert settings.TELEGRAM_BOT_TOKEN == overrides["TELEGRAM_BOT_TOKEN"]
 
 
 def test_get_settings_cached(monkeypatch) -> None:

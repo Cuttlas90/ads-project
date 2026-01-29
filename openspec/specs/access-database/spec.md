@@ -25,16 +25,20 @@ The shared database module SHALL expose a `get_db` helper that yields a database
 - **THEN** a session is yielded for the request and closed after the request completes
 
 ### Requirement: Placeholder users model
-The shared database module SHALL define a minimal `users` table model based on the Telegram User object with the following columns:
-- `id` (BigInteger, primary key, Telegram user ID)
-- `first_name` (String, required)
-- `last_name` (String, optional)
+The shared database module SHALL define a `users` table model with the following columns:
+- `id` (Integer, primary key, auto-increment)
+- `telegram_user_id` (BigInteger, unique, indexed)
 - `username` (String, optional)
+- `first_name` (String, optional)
+- `last_name` (String, optional)
 - `language_code` (String, optional)
-- `is_premium` (Boolean, default `False`)
-- `created_at` (DateTime, server default `now()`)
+- `is_premium` (Boolean, optional)
+- `created_at` (DateTime, required, server default `now()`)
+- `last_login_at` (DateTime, optional)
+
+`telegram_user_id` SHALL be treated as the external identity for Telegram users.
 
 #### Scenario: Users table definition
 - **WHEN** SQLModel metadata is inspected
-- **THEN** the `users` table includes the specified columns, types, and defaults
+- **THEN** the `users` table includes the specified columns and a uniqueness constraint or index on `telegram_user_id`
 

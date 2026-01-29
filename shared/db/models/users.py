@@ -2,25 +2,24 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, String, text
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Integer, String, text
 from sqlmodel import Field, SQLModel
 
 
 class User(SQLModel, table=True):
     __tablename__ = "users"
 
-    id: int = Field(
-        sa_column=Column(BigInteger, primary_key=True, autoincrement=False),
+    id: int | None = Field(default=None, sa_column=Column(Integer, primary_key=True))
+    telegram_user_id: int = Field(
+        sa_column=Column(BigInteger, nullable=False, unique=True, index=True),
     )
-    first_name: str = Field(sa_column=Column(String, nullable=False))
-    last_name: str | None = Field(default=None, sa_column=Column(String))
     username: str | None = Field(default=None, sa_column=Column(String))
+    first_name: str | None = Field(default=None, sa_column=Column(String))
+    last_name: str | None = Field(default=None, sa_column=Column(String))
     language_code: str | None = Field(default=None, sa_column=Column(String))
-    is_premium: bool = Field(
-        default=False,
-        sa_column=Column(Boolean, nullable=False, server_default=text("false")),
-    )
+    is_premium: bool | None = Field(default=None, sa_column=Column(Boolean, nullable=True))
     created_at: datetime | None = Field(
         default=None,
-        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("now()")),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),
     )
+    last_login_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))

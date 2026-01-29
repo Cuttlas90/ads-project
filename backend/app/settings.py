@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://redis:6379/0"
     CELERY_BROKER_URL: str | None = None
     CELERY_RESULT_BACKEND: str | None = None
+    TELEGRAM_BOT_TOKEN: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

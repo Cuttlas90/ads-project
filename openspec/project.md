@@ -37,6 +37,7 @@ The following are **out of scope by design**:
 * Manual posting or manual escrow confirmation
 * External analytics providers (non-Telegram)
 * Multi-language UI (English only)
+* Any authentication mechanism other than Telegram Mini App initData verification (no JWTs, cookies/sessions, OAuth, or passwords)
 
 ---
 
