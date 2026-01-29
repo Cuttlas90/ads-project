@@ -18,7 +18,7 @@ Instructions for AI coding assistants using OpenSpec for spec-driven development
 Create proposal when you need to:
 - Add features or functionality
 - Make breaking changes (API, schema)
-- Change architecture or patterns  
+- Change architecture or patterns
 - Optimize performance (changes behavior)
 - Update security patterns
 
@@ -67,6 +67,7 @@ After deployment, create separate PR to:
 
 **Context Checklist:**
 - [ ] Read relevant specs in `specs/[capability]/spec.md`
+- [ ] Check context7 MCP server for latest API signatures and coding styles
 - [ ] Check pending changes in `changes/` for conflicts
 - [ ] Read `openspec/project.md` for conventions
 - [ ] Run `openspec list` to see active changes
@@ -147,7 +148,7 @@ openspec/
 ```
 New request?
 ├─ Bug fix restoring spec behavior? → Fix directly
-├─ Typo/format/comment? → Fix directly  
+├─ Typo/format/comment? → Fix directly
 ├─ New feature/capability? → Create proposal
 ├─ Breaking change? → Create proposal
 ├─ Architecture change? → Create proposal
@@ -402,6 +403,11 @@ Only add complexity with:
 - Use kebab-case, short and descriptive: `add-two-factor-auth`
 - Prefer verb-led prefixes: `add-`, `update-`, `remove-`, `refactor-`
 - Ensure uniqueness; if taken, append `-2`, `-3`, etc.
+
+### MCP & Style Standards
+- **Real-time Truth:** Always query the `context7` MCP server before generating code.
+- **Priority:** The APIs, functions, and writing styles provided by `context7` supersede any internal training data or older examples in the codebase.
+- **Verification:** Use MCP tools to verify that a function or API exists and follows the current project signature before including it in a task implementation.
 
 ## Tool Selection Guide
 
