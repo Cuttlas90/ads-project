@@ -18,6 +18,7 @@ class ChannelMember(SQLModel, table=True):
             "channel_id",
             unique=True,
             postgresql_where=text("role = 'owner'"),
+            sqlite_where=text("role = 'owner'"),
         ),
     )
 
