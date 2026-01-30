@@ -6,11 +6,19 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_settings_dep
+from app.domain.channel_verification import (
+    ChannelAccessDenied,
+    ChannelBotPermissionDenied,
+    ChannelNotFound,
+)
 from app.models.channel import Channel
 from app.models.channel_member import ChannelMember
 from app.models.user import User
-from app.schemas.channel import ChannelCreate, ChannelRole, ChannelWithRole
+from app.schemas.channel import ChannelCreate, ChannelRole, ChannelSummary, ChannelWithRole
+from app.services.channel_verify import verify_channel
+from app.settings import Settings
+from shared.telegram import TelegramClientService
 
 router = APIRouter(prefix="/channels", tags=["channels"])
 
@@ -99,3 +107,31 @@ def list_channels(
         )
         for channel, role in results
     ]
+
+
+@router.post("/{channel_id}/verify", response_model=ChannelSummary)
+async def verify_channel_endpoint(
+    channel_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings_dep),
+) -> ChannelSummary:
+    telegram_client = TelegramClientService(settings)
+    try:
+        channel = await verify_channel(
+            channel_id=channel_id,
+            user=current_user,
+            db=db,
+            telegram_client=telegram_client,
+        )
+    except ChannelNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except (ChannelAccessDenied, ChannelBotPermissionDenied) as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+    return ChannelSummary(
+        id=channel.id,
+        username=channel.username,
+        title=channel.title,
+        is_verified=channel.is_verified,
+    )
