@@ -1,0 +1,106 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from enum import Enum
+
+from sqlmodel import Session
+
+from app.models.deal import Deal, DealState
+from app.models.deal_event import DealEvent
+
+
+class DealActorRole(str, Enum):
+    advertiser = "advertiser"
+    channel_owner = "channel_owner"
+    system = "system"
+
+
+class DealAction(str, Enum):
+    advance = "advance"
+    propose = "propose"
+    accept = "accept"
+    reject = "reject"
+
+
+@dataclass(frozen=True)
+class TransitionSpec:
+    to_state: str
+    allowed_roles: set[str]
+
+
+TRANSITIONS: dict[tuple[str, str], TransitionSpec] = {
+    (DealAction.advance.value, DealState.DRAFT.value): TransitionSpec(
+        DealState.NEGOTIATION.value,
+        {DealActorRole.system.value},
+    ),
+    (DealAction.propose.value, DealState.DRAFT.value): TransitionSpec(
+        DealState.NEGOTIATION.value,
+        {DealActorRole.advertiser.value, DealActorRole.channel_owner.value},
+    ),
+    (DealAction.propose.value, DealState.NEGOTIATION.value): TransitionSpec(
+        DealState.NEGOTIATION.value,
+        {DealActorRole.advertiser.value, DealActorRole.channel_owner.value},
+    ),
+    (DealAction.accept.value, DealState.NEGOTIATION.value): TransitionSpec(
+        DealState.ACCEPTED.value,
+        {DealActorRole.advertiser.value, DealActorRole.channel_owner.value},
+    ),
+    (DealAction.reject.value, DealState.DRAFT.value): TransitionSpec(
+        DealState.REJECTED.value,
+        {DealActorRole.advertiser.value, DealActorRole.channel_owner.value},
+    ),
+    (DealAction.reject.value, DealState.NEGOTIATION.value): TransitionSpec(
+        DealState.REJECTED.value,
+        {DealActorRole.advertiser.value, DealActorRole.channel_owner.value},
+    ),
+}
+
+
+class DealTransitionError(ValueError):
+    pass
+
+
+def apply_transition(
+    db: Session,
+    *,
+    deal: Deal,
+    action: str,
+    actor_id: int | None,
+    actor_role: str,
+    payload: dict | None = None,
+) -> Deal:
+    if deal.id is None:
+        raise DealTransitionError("Deal must be persisted before transition")
+
+    transition = TRANSITIONS.get((action, deal.state))
+    if transition is None:
+        raise DealTransitionError("Transition not allowed")
+
+    if actor_role not in transition.allowed_roles:
+        raise DealTransitionError("Actor role not allowed")
+
+    if actor_role != DealActorRole.system.value and actor_id is None:
+        raise DealTransitionError("Actor id required for non-system transitions")
+
+    if actor_role == DealActorRole.system.value and actor_id is not None:
+        raise DealTransitionError("System transitions must not include actor id")
+
+    from_state = deal.state
+    deal.state = transition.to_state
+    deal.updated_at = datetime.now(timezone.utc)
+
+    event_payload = dict(payload or {})
+    event_payload.setdefault("action", action)
+
+    event = DealEvent(
+        deal_id=deal.id,
+        actor_id=actor_id,
+        event_type="transition",
+        from_state=from_state,
+        to_state=deal.state,
+        payload=event_payload or None,
+    )
+    db.add(event)
+    db.add(deal)
+    return deal

@@ -11,6 +11,8 @@ from app.models.campaign_request import CampaignRequest
 from app.models.channel import Channel
 from app.models.channel_member import ChannelMember
 from app.models.channel_stats_snapshot import ChannelStatsSnapshot
+from app.models.deal import Deal, DealSourceType
+from app.models.deal_event import DealEvent
 from app.models.user import User
 from app.schemas.campaigns import (
     CampaignApplicationCreate,
@@ -19,6 +21,7 @@ from app.schemas.campaigns import (
     CampaignApplicationStatsSummary,
     CampaignApplicationSummary,
 )
+from app.schemas.deals import DealCreateFromCampaignAccept, DealSummary
 from app.schemas.channel import ChannelRole
 
 router = APIRouter(prefix="/campaigns", tags=["campaign-applications"])
@@ -26,6 +29,7 @@ router = APIRouter(prefix="/campaigns", tags=["campaign-applications"])
 DEFAULT_PAGE = 1
 DEFAULT_PAGE_SIZE = 20
 PREMIUM_RATIO_KEY = "premium_ratio"
+ALLOWED_MEDIA_TYPES = {"image", "video"}
 
 
 def _parse_int(value: str | None, *, field: str, minimum: int | None = None) -> int | None:
@@ -38,6 +42,42 @@ def _parse_int(value: str | None, *, field: str, minimum: int | None = None) -> 
     if minimum is not None and parsed < minimum:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}")
     return parsed
+
+
+def _require_non_empty(value: str | None, *, field: str) -> str:
+    if value is None or not value.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}")
+    return value.strip()
+
+
+def _require_media_type(value: str | None) -> str:
+    normalized = _require_non_empty(value, field="creative_media_type")
+    if normalized not in ALLOWED_MEDIA_TYPES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid creative_media_type")
+    return normalized
+
+
+def _deal_summary(deal: Deal) -> DealSummary:
+    return DealSummary(
+        id=deal.id,
+        source_type=deal.source_type,
+        advertiser_id=deal.advertiser_id,
+        channel_id=deal.channel_id,
+        channel_owner_id=deal.channel_owner_id,
+        listing_id=deal.listing_id,
+        listing_format_id=deal.listing_format_id,
+        campaign_id=deal.campaign_id,
+        campaign_application_id=deal.campaign_application_id,
+        price_ton=deal.price_ton,
+        ad_type=deal.ad_type,
+        creative_text=deal.creative_text,
+        creative_media_type=deal.creative_media_type,
+        creative_media_ref=deal.creative_media_ref,
+        posting_params=deal.posting_params,
+        state=deal.state,
+        created_at=deal.created_at,
+        updated_at=deal.updated_at,
+    )
 
 
 def _require_owner_membership(db: Session, *, channel_id: int, user_id: int | None) -> None:
@@ -249,3 +289,90 @@ def list_campaign_applications(
         total=total,
         items=items,
     )
+
+
+@router.post(
+    "/{campaign_id}/applications/{application_id}/accept",
+    response_model=DealSummary,
+    status_code=status.HTTP_201_CREATED,
+)
+def accept_campaign_application(
+    campaign_id: int,
+    application_id: int,
+    payload: DealCreateFromCampaignAccept,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> DealSummary:
+    campaign = db.exec(select(CampaignRequest).where(CampaignRequest.id == campaign_id)).first()
+    if campaign is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+    if campaign.advertiser_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    application = db.exec(select(CampaignApplication).where(CampaignApplication.id == application_id)).first()
+    if application is None or application.campaign_id != campaign_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
+    if application.status != "submitted":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Application is not submitted")
+
+    existing_campaign = db.exec(select(Deal).where(Deal.campaign_id == campaign_id)).first()
+    if existing_campaign is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Deal already exists")
+    existing_application = db.exec(
+        select(Deal).where(Deal.campaign_application_id == application_id)
+    ).first()
+    if existing_application is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Deal already exists")
+
+    price_ton = payload.price_ton
+    if price_ton is None or price_ton < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid price_ton")
+
+    ad_type = _require_non_empty(payload.ad_type, field="ad_type")
+    creative_text = _require_non_empty(payload.creative_text, field="creative_text")
+    creative_media_type = _require_media_type(payload.creative_media_type)
+    creative_media_ref = _require_non_empty(payload.creative_media_ref, field="creative_media_ref")
+
+    deal = Deal(
+        source_type=DealSourceType.CAMPAIGN.value,
+        advertiser_id=current_user.id,
+        channel_id=application.channel_id,
+        channel_owner_id=application.owner_id,
+        campaign_id=campaign.id,
+        campaign_application_id=application.id,
+        price_ton=price_ton,
+        ad_type=ad_type,
+        creative_text=creative_text,
+        creative_media_type=creative_media_type,
+        creative_media_ref=creative_media_ref,
+        posting_params=payload.posting_params,
+    )
+    db.add(deal)
+    db.flush()
+
+    application.status = "accepted"
+    db.add(application)
+
+    proposal_event = DealEvent(
+        deal_id=deal.id,
+        actor_id=current_user.id,
+        event_type="proposal",
+        payload={
+            "price_ton": str(price_ton),
+            "ad_type": ad_type,
+            "creative_text": creative_text,
+            "creative_media_type": creative_media_type,
+            "creative_media_ref": creative_media_ref,
+            "posting_params": payload.posting_params,
+        },
+    )
+    db.add(proposal_event)
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Deal conflict")
+
+    db.refresh(deal)
+    return _deal_summary(deal)
