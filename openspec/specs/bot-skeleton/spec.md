@@ -4,11 +4,11 @@
 TBD - created by archiving change add-monorepo-skeleton. Update Purpose after archive.
 ## Requirements
 ### Requirement: Bot package layout
-The bot service SHALL include `bot/app/__init__.py`, a minimal `bot/app/main.py` entrypoint with no business logic, and `bot/app/settings.py` for environment-based configuration. The bot package SHALL remain a scaffold and MUST NOT include business logic.
+The bot service SHALL include `bot/app/__init__.py`, a `bot/app/main.py` entrypoint, and `bot/app/settings.py` for environment-based configuration. The bot package MAY include business logic required for bot-only deal messaging and polling-based update handling.
 
-#### Scenario: Minimal bot package
+#### Scenario: Bot package includes messaging logic
 - **WHEN** a developer opens the bot package files
-- **THEN** only package initialization, the minimal entrypoint, and the settings scaffold are present (no business logic)
+- **THEN** the bot entrypoint and messaging handlers are present to support bot-only deal messaging
 
 ### Requirement: Bot dependency scaffold
 The bot service SHALL include a PEP 621 `bot/pyproject.toml` with `[project]` metadata and `[dependency-groups]`. The `dev` dependency group SHALL include black, ruff, and pytest. Poetry-specific sections MUST NOT be required for managing bot dependencies.

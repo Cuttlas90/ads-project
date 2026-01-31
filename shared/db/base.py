@@ -7,6 +7,7 @@ from shared.db.models.channel_member import ChannelMember
 from shared.db.models.channel_stats_snapshot import ChannelStatsSnapshot
 from shared.db.models.deal import Deal
 from shared.db.models.deal_event import DealEvent
+from shared.db.models.deal_message_selection import DealMessageSelection
 from shared.db.models.listing import Listing
 from shared.db.models.listing_format import ListingFormat
 from shared.db.models.users import User
@@ -19,6 +20,7 @@ __all__ = [
     "ChannelStatsSnapshot",
     "Deal",
     "DealEvent",
+    "DealMessageSelection",
     "Listing",
     "ListingFormat",
     "SQLModel",
