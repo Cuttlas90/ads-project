@@ -14,5 +14,13 @@ celery_app.conf.beat_schedule = {
     "ton-escrow-watch": {
         "task": "app.worker.ton_watch.scan_escrows",
         "schedule": 60.0,
-    }
+    },
+    "deal-posting": {
+        "task": "app.worker.deal_posting.post_due_deals",
+        "schedule": 60.0,
+    },
+    "deal-verification": {
+        "task": "app.worker.deal_verification.verify_posted_deals",
+        "schedule": 300.0,
+    },
 }

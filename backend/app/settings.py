@@ -24,10 +24,12 @@ class Settings(BaseSettings):
     TON_NETWORK: str | None = None
     TON_CONFIRMATIONS_REQUIRED: int = 3
     TON_FEE_PERCENT: Decimal | None = None
+    TON_REFUND_NETWORK_FEE: Decimal = Decimal("0.02")
     TON_HOT_WALLET_MNEMONIC: str | None = None
     TONCENTER_API: str | None = None
     TONCENTER_KEY: str | None = None
     TONCONNECT_MANIFEST_URL: str | None = None
+    VERIFICATION_WINDOW_DEFAULT_HOURS: int = 24
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

@@ -18,6 +18,15 @@ class BotApiService:
     def _base_url(self) -> str:
         return f"https://api.telegram.org/bot{self._settings.TELEGRAM_BOT_TOKEN}"
 
+    def _post(self, method: str, payload: dict[str, object]) -> dict:
+        self._require_enabled()
+        response = httpx.post(f"{self._base_url()}/{method}", json=payload)
+        if response.status_code != 200:
+            raise TelegramApiError(
+                f"Bot API error {response.status_code}: {response.text}"
+            )
+        return response.json()
+
     def send_message(
         self,
         chat_id: int | str,
@@ -25,7 +34,6 @@ class BotApiService:
         reply_markup: dict | None = None,
         disable_web_page_preview: bool = True,
     ) -> dict:
-        self._require_enabled()
         payload: dict[str, object] = {
             "chat_id": chat_id,
             "text": text,
@@ -34,9 +42,36 @@ class BotApiService:
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
 
-        response = httpx.post(f"{self._base_url()}/sendMessage", json=payload)
-        if response.status_code != 200:
-            raise TelegramApiError(
-                f"Bot API error {response.status_code}: {response.text}"
-            )
-        return response.json()
+        return self._post("sendMessage", payload)
+
+    def send_photo(
+        self,
+        chat_id: int | str,
+        photo: str,
+        caption: str | None = None,
+        disable_notification: bool = False,
+    ) -> dict:
+        payload: dict[str, object] = {
+            "chat_id": chat_id,
+            "photo": photo,
+            "disable_notification": disable_notification,
+        }
+        if caption is not None:
+            payload["caption"] = caption
+        return self._post("sendPhoto", payload)
+
+    def send_video(
+        self,
+        chat_id: int | str,
+        video: str,
+        caption: str | None = None,
+        disable_notification: bool = False,
+    ) -> dict:
+        payload: dict[str, object] = {
+            "chat_id": chat_id,
+            "video": video,
+            "disable_notification": disable_notification,
+        }
+        if caption is not None:
+            payload["caption"] = caption
+        return self._post("sendVideo", payload)

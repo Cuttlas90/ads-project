@@ -90,6 +90,30 @@ class Deal(SQLModel, table=True):
         default=None,
         sa_column=Column(JSON, nullable=True),
     )
+    scheduled_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    verification_window_hours: int | None = Field(
+        default=None,
+        sa_column=Column(Integer, nullable=True),
+    )
+    posted_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    posted_message_id: str | None = Field(
+        default=None,
+        sa_column=Column(String, nullable=True),
+    )
+    posted_content_hash: str | None = Field(
+        default=None,
+        sa_column=Column(String, nullable=True),
+    )
+    verified_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
     state: str = Field(
         default=DealState.DRAFT.value,
         sa_column=Column(String, nullable=False, server_default=text("'DRAFT'"), index=True),

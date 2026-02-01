@@ -37,6 +37,30 @@ class DealEscrow(SQLModel, table=True):
         sa_column=Column(Integer, nullable=False, server_default=text("0")),
     )
     fee_percent: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))
+    release_tx_hash: str | None = Field(
+        default=None,
+        sa_column=Column(String, nullable=True),
+    )
+    refund_tx_hash: str | None = Field(
+        default=None,
+        sa_column=Column(String, nullable=True),
+    )
+    released_amount_ton: Decimal | None = Field(
+        default=None,
+        sa_column=Column(Numeric(18, 9), nullable=True),
+    )
+    refunded_amount_ton: Decimal | None = Field(
+        default=None,
+        sa_column=Column(Numeric(18, 9), nullable=True),
+    )
+    released_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    refunded_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
     created_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),

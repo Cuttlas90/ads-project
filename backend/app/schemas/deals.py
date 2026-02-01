@@ -48,6 +48,12 @@ class DealSummary(BaseModel):
     creative_media_type: str
     creative_media_ref: str
     posting_params: dict | list | None
+    scheduled_at: datetime | None = None
+    verification_window_hours: int | None = None
+    posted_at: datetime | None = None
+    posted_message_id: str | None = None
+    posted_content_hash: str | None = None
+    verified_at: datetime | None = None
     state: str
     created_at: datetime
     updated_at: datetime

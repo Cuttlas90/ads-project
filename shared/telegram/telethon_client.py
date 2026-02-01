@@ -29,6 +29,10 @@ class TelegramClientService:
             )
         return self._client
 
+    def client(self) -> TelegramClient:
+        self._require_enabled()
+        return self._get_client()
+
     async def connect(self) -> None:
         self._require_enabled()
         client = self._get_client()

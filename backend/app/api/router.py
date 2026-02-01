@@ -10,6 +10,7 @@ from app.api.routes import (
     health,
     listings,
     marketplace,
+    users,
 )
 
 api_router = APIRouter()
@@ -22,3 +23,4 @@ api_router.include_router(campaign_applications.router)
 api_router.include_router(deals.router)
 api_router.include_router(marketplace.router)
 api_router.include_router(health.router)
+api_router.include_router(users.router)

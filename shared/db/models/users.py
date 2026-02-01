@@ -20,6 +20,7 @@ class User(SQLModel, table=True):
     last_name: str | None = Field(default=None, sa_column=Column(String))
     language_code: str | None = Field(default=None, sa_column=Column(String))
     is_premium: bool | None = Field(default=None, sa_column=Column(Boolean, nullable=True))
+    ton_wallet_address: str | None = Field(default=None, sa_column=Column(String, nullable=True))
     created_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),

@@ -22,6 +22,11 @@ class DealAction(str, Enum):
     accept = "accept"
     reject = "reject"
     fund = "fund"
+    schedule = "schedule"
+    post = "post"
+    verify = "verify"
+    release = "release"
+    refund = "refund"
 
 
 @dataclass(frozen=True)
@@ -49,6 +54,26 @@ TRANSITIONS: dict[tuple[str, str], TransitionSpec] = {
     ),
     (DealAction.fund.value, DealState.ACCEPTED.value): TransitionSpec(
         DealState.FUNDED.value,
+        {DealActorRole.system.value},
+    ),
+    (DealAction.schedule.value, DealState.CREATIVE_APPROVED.value): TransitionSpec(
+        DealState.SCHEDULED.value,
+        {DealActorRole.system.value},
+    ),
+    (DealAction.post.value, DealState.SCHEDULED.value): TransitionSpec(
+        DealState.POSTED.value,
+        {DealActorRole.system.value},
+    ),
+    (DealAction.verify.value, DealState.POSTED.value): TransitionSpec(
+        DealState.VERIFIED.value,
+        {DealActorRole.system.value},
+    ),
+    (DealAction.release.value, DealState.VERIFIED.value): TransitionSpec(
+        DealState.RELEASED.value,
+        {DealActorRole.system.value},
+    ),
+    (DealAction.refund.value, DealState.POSTED.value): TransitionSpec(
+        DealState.REFUNDED.value,
         {DealActorRole.system.value},
     ),
     (DealAction.reject.value, DealState.DRAFT.value): TransitionSpec(
