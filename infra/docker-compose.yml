@@ -71,6 +71,24 @@ services:
       redis:
         condition: service_healthy
 
+  beat:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    command: celery -A app.worker.celery_app beat --loglevel=INFO
+    env_file:
+      - ../.env
+    environment:
+      PYTHONPATH: /app
+    volumes:
+      - ../backend:/app
+      - ../shared:/app/shared
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   frontend:
     build:
       context: ../frontend

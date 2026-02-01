@@ -1,0 +1,2 @@
+class TonConfigError(ValueError):
+    pass

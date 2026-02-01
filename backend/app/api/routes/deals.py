@@ -7,11 +7,17 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from app.api.deps import get_current_user, get_db, get_settings_dep
+from app.domain.escrow_fsm import EscrowState, EscrowTransitionError, apply_escrow_transition
 from app.models.deal import Deal, DealSourceType, DealState
+from app.models.deal_escrow import DealEscrow
 from app.models.deal_event import DealEvent
 from app.models.user import User
+from app.schemas.escrow import EscrowInitResponse, TonConnectTxResponse
 from app.schemas.deals import DealMessageCreate, DealMessageSummary, DealSummary, DealUpdate
 from app.services.deal_fsm import DealAction, DealActorRole, DealTransitionError, apply_transition
+from app.services.ton.errors import TonConfigError
+from app.services.ton.tonconnect import build_tonconnect_transaction
+from app.services.ton.wallets import generate_deal_deposit_address
 from app.settings import Settings
 from shared.telegram.bot_api import BotApiService
 from shared.telegram.errors import TelegramApiError, TelegramConfigError
@@ -51,6 +57,10 @@ def _load_deal(db: Session, deal_id: int) -> Deal:
     return deal
 
 
+def _load_escrow(db: Session, deal_id: int) -> DealEscrow | None:
+    return db.exec(select(DealEscrow).where(DealEscrow.deal_id == deal_id)).first()
+
+
 def _require_actor_role(deal: Deal, user_id: int | None) -> str:
     if user_id is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
@@ -59,6 +69,11 @@ def _require_actor_role(deal: Deal, user_id: int | None) -> str:
     if user_id == deal.channel_owner_id:
         return DealActorRole.channel_owner.value
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+
+def _require_advertiser(deal: Deal, user_id: int | None) -> None:
+    if user_id is None or user_id != deal.advertiser_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only advertiser may perform this action")
 
 
 def _require_non_empty(value: str | None, *, field: str) -> str:
@@ -225,6 +240,106 @@ def accept_deal(
     db.commit()
     db.refresh(deal)
     return _deal_summary(deal)
+
+
+@router.post("/{deal_id}/escrow/init", response_model=EscrowInitResponse)
+def init_escrow(
+    deal_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings_dep),
+) -> EscrowInitResponse:
+    deal = _load_deal(db, deal_id)
+    _require_advertiser(deal, current_user.id)
+
+    if deal.state != DealState.ACCEPTED.value:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deal is not accepted")
+
+    if deal.price_ton <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid deal price")
+
+    if settings.TON_FEE_PERCENT is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="TON_FEE_PERCENT is not configured")
+
+    escrow = _load_escrow(db, deal.id)
+    if escrow is None:
+        escrow = DealEscrow(
+            deal_id=deal.id,
+            state=EscrowState.CREATED.value,
+            expected_amount_ton=deal.price_ton,
+            received_amount_ton=Decimal("0"),
+            fee_percent=settings.TON_FEE_PERCENT,
+        )
+        db.add(escrow)
+        db.flush()
+
+    if escrow.state == EscrowState.FAILED.value:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Escrow is in failed state")
+
+    if not escrow.deposit_address:
+        try:
+            escrow.deposit_address = generate_deal_deposit_address(deal_id=deal.id, settings=settings)
+        except TonConfigError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        db.add(escrow)
+
+    if escrow.state == EscrowState.CREATED.value:
+        try:
+            apply_escrow_transition(
+                db,
+                escrow=escrow,
+                to_state=EscrowState.AWAITING_DEPOSIT.value,
+                actor_user_id=current_user.id,
+                event_type="address_generated",
+                payload={"deposit_address": escrow.deposit_address},
+            )
+        except EscrowTransitionError as exc:
+            db.rollback()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    db.commit()
+    db.refresh(escrow)
+
+    if not escrow.deposit_address:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Deposit address is missing")
+
+    return EscrowInitResponse(
+        escrow_id=escrow.id,
+        deal_id=deal.id,
+        state=escrow.state,
+        deposit_address=escrow.deposit_address,
+        fee_percent=escrow.fee_percent,
+        confirmations_required=settings.TON_CONFIRMATIONS_REQUIRED,
+    )
+
+
+@router.post("/{deal_id}/escrow/tonconnect-tx", response_model=TonConnectTxResponse)
+def tonconnect_tx(
+    deal_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings_dep),
+) -> TonConnectTxResponse:
+    deal = _load_deal(db, deal_id)
+    _require_advertiser(deal, current_user.id)
+
+    if deal.state != DealState.ACCEPTED.value:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deal is not accepted")
+
+    escrow = _load_escrow(db, deal.id)
+    if escrow is None or not escrow.deposit_address:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Escrow is not initialized")
+
+    try:
+        payload = build_tonconnect_transaction(
+            deposit_address=escrow.deposit_address,
+            amount_ton=deal.price_ton,
+            settings=settings,
+        )
+    except TonConfigError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    return TonConnectTxResponse(escrow_id=escrow.id, deal_id=deal.id, payload=payload)
 
 
 @router.post("/{deal_id}/messages", response_model=DealMessageSummary, status_code=status.HTTP_201_CREATED)

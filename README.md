@@ -24,6 +24,12 @@ cp .env.example .env
 docker compose --env-file .env -f infra/docker-compose.yml up --build
 ```
 
+### TON configuration
+Set TON variables in `.env` for escrow funding:
+- `TON_FEE_PERCENT`, `TON_HOT_WALLET_MNEMONIC`, `TONCENTER_API`, optional `TONCENTER_KEY`
+- `TON_NETWORK` defaults to `testnet` in `ENV=dev`
+The escrow watcher runs via Celery beat every 60 seconds.
+
 ### Frontend
 ```bash
 cd frontend

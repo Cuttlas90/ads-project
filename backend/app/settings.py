@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from functools import lru_cache
 
 from pydantic import model_validator
@@ -19,6 +20,14 @@ class Settings(BaseSettings):
     TELEGRAM_API_HASH: str | None = None
     TELEGRAM_ENABLED: bool = True
     TELEGRAM_SESSION_NAME: str = "tgads_backend"
+    TON_ENABLED: bool = True
+    TON_NETWORK: str | None = None
+    TON_CONFIRMATIONS_REQUIRED: int = 3
+    TON_FEE_PERCENT: Decimal | None = None
+    TON_HOT_WALLET_MNEMONIC: str | None = None
+    TONCENTER_API: str | None = None
+    TONCENTER_KEY: str | None = None
+    TONCONNECT_MANIFEST_URL: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -28,6 +37,8 @@ class Settings(BaseSettings):
             self.CELERY_BROKER_URL = self.REDIS_URL
         if self.CELERY_RESULT_BACKEND is None:
             self.CELERY_RESULT_BACKEND = self.REDIS_URL
+        if self.TON_NETWORK is None:
+            self.TON_NETWORK = "testnet" if self.ENV == "dev" else "mainnet"
         return self
 
 

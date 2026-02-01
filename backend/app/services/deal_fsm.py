@@ -21,6 +21,7 @@ class DealAction(str, Enum):
     propose = "propose"
     accept = "accept"
     reject = "reject"
+    fund = "fund"
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,10 @@ TRANSITIONS: dict[tuple[str, str], TransitionSpec] = {
     (DealAction.accept.value, DealState.NEGOTIATION.value): TransitionSpec(
         DealState.ACCEPTED.value,
         {DealActorRole.advertiser.value, DealActorRole.channel_owner.value},
+    ),
+    (DealAction.fund.value, DealState.ACCEPTED.value): TransitionSpec(
+        DealState.FUNDED.value,
+        {DealActorRole.system.value},
     ),
     (DealAction.reject.value, DealState.DRAFT.value): TransitionSpec(
         DealState.REJECTED.value,
