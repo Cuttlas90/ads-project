@@ -1,0 +1,85 @@
+schema: spec-driven
+
+context: |
+  Telegram Mini App ads marketplace with TON escrow.
+
+  Locked stack:
+  - Backend: Python 3, FastAPI, PostgreSQL, SQLAlchemy/SQLModel, Alembic
+  - Async: Celery + Redis
+  - Telegram: Telethon (MTProto mandatory) + Bot API
+  - Frontend: Vue 3 + Vite + TypeScript + Telegram Mini App SDK
+
+  Hard constraints:
+  - Backend-first architecture
+  - Explicit FSM for all deal flows (no implicit logic)
+  - Real TON payments only (no mocks, no fiat)
+  - One unique escrow wallet per deal
+  - Auto-posting + automated verification required before release
+  - Telegram initData is the ONLY auth (no JWT/sessions/cookies/OAuth)
+  - Telegram data/permissions are source of truth (always revalidate)
+  - Monorepo: backend/, bot/, frontend/, shared/, infra/, docs/
+
+  Engineering conventions frequently violated:
+  - All state transitions must use a transition table (never ad-hoc)
+  - DB changes must be migration-first (Alembic)
+  - Background work only via Celery (never in request thread)
+  - No manual or human verification paths
+  - English-only UI
+
+rules:
+  specs:
+    - Use explicit, testable behavior.
+    - Describe flows as FSM transitions (state → state with actor, preconditions, side effects).
+    - Prefer Given/When/Then style acceptance criteria.
+
+  backend:
+    - All deal logic must live inside FSM/transition layer, not controllers.
+    - No business logic inside routes.
+    - All writes are transactional.
+    - No background loops; use Celery tasks only.
+    - Every new table requires Alembic migration.
+
+  payments:
+    - One escrow wallet per deal.
+    - Funds release ONLY after VERIFIED state.
+    - Any verification failure → refund path only.
+    - Fee deducted at release time only.
+
+  telegram:
+    - Telethon required for stats/permissions (no scraping or third-party APIs).
+    - Revalidate permissions before funding, posting, and release.
+    - All notifications via bot messages with deep links.
+    - System bot must perform posting.
+
+  frontend:
+    - Telegram-native look & feel is mandatory.
+    - No internal chat UI.
+    - Use initData only for auth; never store sessions.
+
+  jobs:
+    - Posting, verification, timeouts, refunds must be scheduled/background tasks only.
+    - Periodic verification checks content hash + existence + visibility duration.
+
+  repo:
+    - Respect monorepo boundaries.
+    - Shared models go in shared/, not duplicated.
+
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+# Example:
+#   context: |
+#     Tech stack: TypeScript, React, Node.js
+#     We use conventional commits
+#     Domain: e-commerce platform
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
