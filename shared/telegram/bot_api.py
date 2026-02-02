@@ -75,3 +75,50 @@ class BotApiService:
         if caption is not None:
             payload["caption"] = caption
         return self._post("sendVideo", payload)
+
+    def upload_media(
+        self,
+        *,
+        media_type: str,
+        filename: str,
+        content: bytes,
+    ) -> dict:
+        self._require_enabled()
+        channel_id = getattr(self._settings, "TELEGRAM_MEDIA_CHANNEL_ID", None)
+        if not channel_id:
+            raise TelegramConfigError("TELEGRAM_MEDIA_CHANNEL_ID is not configured")
+        if media_type not in {"image", "video"}:
+            raise TelegramApiError("Unsupported media type")
+
+        method = "sendPhoto" if media_type == "image" else "sendVideo"
+        field_name = "photo" if media_type == "image" else "video"
+
+        response = httpx.post(
+            f"{self._base_url()}/{method}",
+            data={"chat_id": channel_id, "disable_notification": True},
+            files={field_name: (filename, content)},
+        )
+        if response.status_code != 200:
+            raise TelegramApiError(
+                f"Bot API error {response.status_code}: {response.text}"
+            )
+
+        payload = response.json()
+        if not payload.get("ok"):
+            raise TelegramApiError(f"Bot API error: {payload}")
+
+        result = payload.get("result") or {}
+        file_id: str | None = None
+        if media_type == "image":
+            photos = result.get("photo") or []
+            if isinstance(photos, list) and photos:
+                file_id = photos[-1].get("file_id")
+        else:
+            video = result.get("video") or {}
+            if isinstance(video, dict):
+                file_id = video.get("file_id")
+
+        if not file_id:
+            raise TelegramApiError("Bot API response missing file_id")
+
+        return {"file_id": file_id, "media_type": media_type}

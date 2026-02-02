@@ -67,7 +67,7 @@ def _seed_escrow(session: Session) -> DealEscrow:
         creative_media_type="image",
         creative_media_ref="ref",
         posting_params=None,
-        state=DealState.ACCEPTED.value,
+        state=DealState.CREATIVE_APPROVED.value,
     )
     session.add(deal)
     session.flush()

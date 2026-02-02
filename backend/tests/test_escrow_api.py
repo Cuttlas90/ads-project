@@ -108,7 +108,7 @@ def _seed_deal(db_engine) -> int:
             creative_media_type="image",
             creative_media_ref="ref",
             posting_params=None,
-            state=DealState.ACCEPTED.value,
+            state=DealState.CREATIVE_APPROVED.value,
         )
         session.add(deal)
         session.commit()
@@ -144,6 +144,51 @@ def test_escrow_init_requires_advertiser(client, db_engine, monkeypatch) -> None
     assert response.status_code == 403
 
 
+def test_escrow_init_requires_creative_approved(client, db_engine, monkeypatch) -> None:
+    with Session(db_engine) as session:
+        advertiser = User(telegram_user_id=333, username="adv2")
+        owner = User(telegram_user_id=444, username="owner2")
+        session.add(advertiser)
+        session.add(owner)
+        session.flush()
+
+        channel = Channel(username="channel2")
+        session.add(channel)
+        session.flush()
+
+        listing = Listing(channel_id=channel.id, owner_id=owner.id, is_active=True)
+        session.add(listing)
+        session.flush()
+
+        listing_format = ListingFormat(listing_id=listing.id, label="Post", price=Decimal("10.00"))
+        session.add(listing_format)
+        session.flush()
+
+        deal = Deal(
+            source_type=DealSourceType.LISTING.value,
+            advertiser_id=advertiser.id,
+            channel_id=channel.id,
+            channel_owner_id=owner.id,
+            listing_id=listing.id,
+            listing_format_id=listing_format.id,
+            price_ton=Decimal("10.00"),
+            ad_type=listing_format.label,
+            creative_text="Hello",
+            creative_media_type="image",
+            creative_media_ref="ref",
+            posting_params=None,
+            state=DealState.ACCEPTED.value,
+        )
+        session.add(deal)
+        session.commit()
+        session.refresh(deal)
+        deal_id = deal.id
+
+    monkeypatch.setattr("app.api.routes.deals.generate_deal_deposit_address", lambda **kwargs: "EQ_TEST_ADDRESS")
+    response = client.post(f"/deals/{deal_id}/escrow/init", headers=_auth_headers(333))
+    assert response.status_code == 400
+
+
 def test_tonconnect_payload(client, db_engine, monkeypatch) -> None:
     deal_id = _seed_deal(db_engine)
     monkeypatch.setattr("app.api.routes.deals.generate_deal_deposit_address", lambda **kwargs: "EQ_TEST_ADDRESS")
@@ -156,3 +201,17 @@ def test_tonconnect_payload(client, db_engine, monkeypatch) -> None:
     payload = response.json()["payload"]
     assert payload["messages"][0]["address"] == "EQ_TEST_ADDRESS"
     assert payload["messages"][0]["amount"] == str(10 * 1_000_000_000)
+
+
+def test_escrow_status_endpoint(client, db_engine, monkeypatch) -> None:
+    deal_id = _seed_deal(db_engine)
+    monkeypatch.setattr("app.api.routes.deals.generate_deal_deposit_address", lambda **kwargs: "EQ_TEST_ADDRESS")
+
+    response = client.post(f"/deals/{deal_id}/escrow/init", headers=_auth_headers(111))
+    assert response.status_code == 200
+
+    response = client.get(f"/deals/{deal_id}/escrow", headers=_auth_headers(111))
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["deposit_address"] == "EQ_TEST_ADDRESS"
+    assert payload["state"] == "AWAITING_DEPOSIT"

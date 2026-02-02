@@ -68,7 +68,7 @@ def _seed_deal(session: Session, *, scheduled_at: datetime) -> Deal:
         creative_media_ref="ref",
         posting_params=None,
         scheduled_at=scheduled_at,
-        state=DealState.CREATIVE_APPROVED.value,
+        state=DealState.FUNDED.value,
     )
     session.add(deal)
     session.commit()

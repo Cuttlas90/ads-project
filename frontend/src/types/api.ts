@@ -1,0 +1,129 @@
+export type RolePreference = 'owner' | 'advertiser'
+
+export interface AuthMeResponse {
+  id: number
+  telegram_user_id: number
+  preferred_role: RolePreference | null
+}
+
+export interface DealInboxItem {
+  id: number
+  state: string
+  channel_id: number
+  channel_username?: string | null
+  channel_title?: string | null
+  advertiser_id: number
+  price_ton: string
+  ad_type: string
+  updated_at: string
+}
+
+export interface DealInboxPage {
+  page: number
+  page_size: number
+  total: number
+  items: DealInboxItem[]
+}
+
+export interface DealDetail {
+  id: number
+  source_type: string
+  advertiser_id: number
+  channel_id: number
+  channel_owner_id: number
+  listing_id?: number | null
+  listing_format_id?: number | null
+  campaign_id?: number | null
+  campaign_application_id?: number | null
+  price_ton: string
+  ad_type: string
+  creative_text: string
+  creative_media_type: string
+  creative_media_ref: string
+  posting_params?: Record<string, unknown> | null
+  scheduled_at?: string | null
+  verification_window_hours?: number | null
+  posted_at?: string | null
+  posted_message_id?: string | null
+  posted_content_hash?: string | null
+  verified_at?: string | null
+  state: string
+  created_at: string
+  updated_at: string
+  channel_username?: string | null
+  channel_title?: string | null
+  advertiser_username?: string | null
+  advertiser_first_name?: string | null
+  advertiser_last_name?: string | null
+}
+
+export interface DealTimelineEvent {
+  event_type: string
+  from_state?: string | null
+  to_state?: string | null
+  payload?: Record<string, unknown> | null
+  created_at: string
+  actor_id?: number | null
+}
+
+export interface DealTimelinePage {
+  items: DealTimelineEvent[]
+  next_cursor?: string | null
+}
+
+export interface ChannelSummary {
+  id: number
+  username?: string | null
+  title?: string | null
+  is_verified: boolean
+  role: string
+}
+
+export interface ListingFormatSummary {
+  id: number
+  listing_id: number
+  label: string
+  price: string
+}
+
+export interface ListingSummary {
+  id: number
+  channel_id: number
+  owner_id: number
+  is_active: boolean
+}
+
+export interface ListingDetail extends ListingSummary {
+  formats: ListingFormatSummary[]
+}
+
+export interface ChannelListingResponse {
+  has_listing: boolean
+  listing?: ListingDetail | null
+}
+
+export interface MarketplaceListingFormat {
+  id: number
+  format_id: number
+  label: string
+  price: string
+}
+
+export interface MarketplaceListingItem {
+  listing_id: number
+  channel_username?: string | null
+  channel_title?: string | null
+  formats: MarketplaceListingFormat[]
+  stats: {
+    subscribers?: number | null
+    avg_views?: number | null
+    premium_ratio: number
+  }
+}
+
+export interface MarketplaceListingPage {
+  page: number
+  page_size: number
+  total: number
+  items: MarketplaceListingItem[]
+}

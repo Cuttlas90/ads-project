@@ -14,8 +14,11 @@ from app.domain.channel_verification import (
 )
 from app.models.channel import Channel
 from app.models.channel_member import ChannelMember
+from app.models.listing import Listing
+from app.models.listing_format import ListingFormat
 from app.models.user import User
 from app.schemas.channel import ChannelCreate, ChannelRole, ChannelSummary, ChannelWithRole
+from app.schemas.listing import ChannelListingResponse, ListingDetail, ListingFormatSummary
 from app.services.channel_verify import verify_channel
 from app.settings import Settings
 from shared.telegram import TelegramClientService
@@ -38,6 +41,29 @@ def _normalize_username(raw_username: str) -> str:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid username")
 
     return normalized
+
+
+def _require_owner_membership(db: Session, *, channel_id: int, user_id: int | None) -> None:
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only channel owners may manage listings",
+        )
+
+    membership = (
+        db.exec(
+            select(ChannelMember)
+            .where(ChannelMember.channel_id == channel_id)
+            .where(ChannelMember.user_id == user_id)
+            .where(ChannelMember.role == ChannelRole.owner.value)
+        )
+        .first()
+    )
+    if membership is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only channel owners may manage listings",
+        )
 
 
 @router.post("", response_model=ChannelWithRole, status_code=status.HTTP_201_CREATED)
@@ -107,6 +133,44 @@ def list_channels(
         )
         for channel, role in results
     ]
+
+
+@router.get("/{channel_id}/listing", response_model=ChannelListingResponse)
+def read_channel_listing(
+    channel_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ChannelListingResponse:
+    _require_owner_membership(db, channel_id=channel_id, user_id=current_user.id)
+
+    listing = db.exec(select(Listing).where(Listing.channel_id == channel_id)).first()
+    if listing is None:
+        return ChannelListingResponse(has_listing=False, listing=None)
+
+    formats = db.exec(
+        select(ListingFormat)
+        .where(ListingFormat.listing_id == listing.id)
+        .order_by(ListingFormat.price.asc(), ListingFormat.id.asc())
+    ).all()
+
+    return ChannelListingResponse(
+        has_listing=True,
+        listing=ListingDetail(
+            id=listing.id,
+            channel_id=listing.channel_id,
+            owner_id=listing.owner_id,
+            is_active=listing.is_active,
+            formats=[
+                ListingFormatSummary(
+                    id=format_row.id,
+                    listing_id=format_row.listing_id,
+                    label=format_row.label,
+                    price=format_row.price,
+                )
+                for format_row in formats
+            ],
+        ),
+    )
 
 
 @router.post("/{channel_id}/verify", response_model=ChannelSummary)

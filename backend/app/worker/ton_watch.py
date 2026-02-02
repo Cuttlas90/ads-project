@@ -153,7 +153,7 @@ def _process_escrow(
         if deal is None:
             raise ValueError("Deal not found for escrow")
 
-        if deal.state == DealState.ACCEPTED.value:
+        if deal.state == DealState.CREATIVE_APPROVED.value:
             apply_transition(
                 db,
                 deal=deal,

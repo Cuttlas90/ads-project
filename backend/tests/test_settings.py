@@ -14,6 +14,7 @@ _ENV_KEYS = [
     "TELEGRAM_API_HASH",
     "TELEGRAM_ENABLED",
     "TELEGRAM_SESSION_NAME",
+    "TELEGRAM_MEDIA_CHANNEL_ID",
 ]
 
 
@@ -35,6 +36,7 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.TELEGRAM_API_HASH is None
     assert settings.TELEGRAM_ENABLED is True
     assert settings.TELEGRAM_SESSION_NAME == "tgads_backend"
+    assert settings.TELEGRAM_MEDIA_CHANNEL_ID is None
 
 
 def test_settings_overrides(monkeypatch) -> None:
@@ -50,6 +52,7 @@ def test_settings_overrides(monkeypatch) -> None:
         "TELEGRAM_API_HASH": "hash",
         "TELEGRAM_ENABLED": "false",
         "TELEGRAM_SESSION_NAME": "custom_session",
+        "TELEGRAM_MEDIA_CHANNEL_ID": "123",
     }
 
     for key, value in overrides.items():
@@ -69,6 +72,7 @@ def test_settings_overrides(monkeypatch) -> None:
     assert settings.TELEGRAM_API_HASH == overrides["TELEGRAM_API_HASH"]
     assert settings.TELEGRAM_ENABLED is False
     assert settings.TELEGRAM_SESSION_NAME == overrides["TELEGRAM_SESSION_NAME"]
+    assert settings.TELEGRAM_MEDIA_CHANNEL_ID == int(overrides["TELEGRAM_MEDIA_CHANNEL_ID"])
 
 
 def test_get_settings_cached(monkeypatch) -> None:

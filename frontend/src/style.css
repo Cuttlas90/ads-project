@@ -1,9 +1,56 @@
 :root {
   color-scheme: light;
+  --tg-bg: var(--tg-theme-bg-color, #f4f1ec);
+  --tg-text: var(--tg-theme-text-color, #1a1a1a);
+  --tg-hint: var(--tg-theme-hint-color, #6b6b6b);
+  --tg-link: var(--tg-theme-link-color, #0b7a75);
+  --tg-button: var(--tg-theme-button-color, #0b7a75);
+  --tg-button-text: var(--tg-theme-button-text-color, #ffffff);
+  --tg-secondary-bg: var(--tg-theme-secondary-bg-color, #ffffff);
+
+  --app-bg: #f6f1ea;
+  --app-surface: #ffffff;
+  --app-surface-muted: #f1ece5;
+  --app-ink: #191919;
+  --app-ink-muted: #5b5b5b;
+  --app-accent: #0b7a75;
+  --app-accent-2: #f4a261;
+  --app-border: rgba(20, 20, 20, 0.12);
+  --app-danger: #d64550;
+  --app-success: #2a9d8f;
+  --app-warning: #f4a261;
+  --app-shadow: 0 16px 36px rgba(17, 17, 17, 0.1);
+  --app-radius-lg: 18px;
+  --app-radius-md: 14px;
+  --app-radius-sm: 10px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
-  background: #f7f7f7;
-  color: #111;
+  min-height: 100vh;
+  font-family: 'Space Grotesk', 'IBM Plex Sans', 'SF Pro Text', 'Segoe UI', sans-serif;
+  color: var(--app-ink);
+  background:
+    radial-gradient(circle at top right, rgba(244, 162, 97, 0.18), transparent 55%),
+    radial-gradient(circle at 15% 20%, rgba(11, 122, 117, 0.12), transparent 55%), var(--app-bg);
+}
+
+a {
+  color: var(--tg-link);
+  text-decoration: none;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+#app {
+  min-height: 100vh;
 }

@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     TELEGRAM_API_HASH: str | None = None
     TELEGRAM_ENABLED: bool = True
     TELEGRAM_SESSION_NAME: str = "tgads_backend"
+    TELEGRAM_MEDIA_CHANNEL_ID: int | None = None
     TON_ENABLED: bool = True
     TON_NETWORK: str | None = None
     TON_CONFIRMATIONS_REQUIRED: int = 3

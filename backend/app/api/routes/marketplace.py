@@ -117,7 +117,12 @@ def list_marketplace_listings(
             channel_username=item.channel_username,
             channel_title=item.channel_title,
             formats=[
-                MarketplaceListingFormat(label=format_item.label, price=format_item.price)
+                MarketplaceListingFormat(
+                    id=format_item.id,
+                    format_id=format_item.id,
+                    label=format_item.label,
+                    price=format_item.price,
+                )
                 for format_item in item.formats
             ],
             stats=MarketplaceListingStats(

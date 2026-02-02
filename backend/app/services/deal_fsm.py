@@ -21,6 +21,9 @@ class DealAction(str, Enum):
     propose = "propose"
     accept = "accept"
     reject = "reject"
+    creative_submit = "creative_submit"
+    creative_approve = "creative_approve"
+    creative_request_edits = "creative_request_edits"
     fund = "fund"
     schedule = "schedule"
     post = "post"
@@ -52,11 +55,27 @@ TRANSITIONS: dict[tuple[str, str], TransitionSpec] = {
         DealState.ACCEPTED.value,
         {DealActorRole.advertiser.value, DealActorRole.channel_owner.value},
     ),
-    (DealAction.fund.value, DealState.ACCEPTED.value): TransitionSpec(
+    (DealAction.creative_submit.value, DealState.ACCEPTED.value): TransitionSpec(
+        DealState.CREATIVE_SUBMITTED.value,
+        {DealActorRole.channel_owner.value},
+    ),
+    (DealAction.creative_submit.value, DealState.CREATIVE_CHANGES_REQUESTED.value): TransitionSpec(
+        DealState.CREATIVE_SUBMITTED.value,
+        {DealActorRole.channel_owner.value},
+    ),
+    (DealAction.creative_approve.value, DealState.CREATIVE_SUBMITTED.value): TransitionSpec(
+        DealState.CREATIVE_APPROVED.value,
+        {DealActorRole.advertiser.value},
+    ),
+    (DealAction.creative_request_edits.value, DealState.CREATIVE_SUBMITTED.value): TransitionSpec(
+        DealState.CREATIVE_CHANGES_REQUESTED.value,
+        {DealActorRole.advertiser.value},
+    ),
+    (DealAction.fund.value, DealState.CREATIVE_APPROVED.value): TransitionSpec(
         DealState.FUNDED.value,
         {DealActorRole.system.value},
     ),
-    (DealAction.schedule.value, DealState.CREATIVE_APPROVED.value): TransitionSpec(
+    (DealAction.schedule.value, DealState.FUNDED.value): TransitionSpec(
         DealState.SCHEDULED.value,
         {DealActorRole.system.value},
     ),

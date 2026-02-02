@@ -222,6 +222,7 @@ def test_marketplace_filters_and_search(client: TestClient, db_engine) -> None:
     payload = response.json()
     assert len(payload["items"]) == 1
     assert payload["items"][0]["channel_username"] == "alpha"
+    assert payload["items"][0]["formats"][0]["format_id"] == payload["items"][0]["formats"][0]["id"]
 
 
 def test_marketplace_sort_by_price(client: TestClient, db_engine) -> None:

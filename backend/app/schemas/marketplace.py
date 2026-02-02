@@ -6,6 +6,8 @@ from pydantic import BaseModel
 
 
 class MarketplaceListingFormat(BaseModel):
+    id: int
+    format_id: int
     label: str
     price: Decimal
 

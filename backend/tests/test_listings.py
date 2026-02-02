@@ -94,6 +94,15 @@ def _create_listing(client: TestClient, channel_id: int, owner_id: int) -> int:
     return response.json()["id"]
 
 
+def _create_listing_format(client: TestClient, listing_id: int, owner_id: int) -> int:
+    response = client.post(
+        f"/listings/{listing_id}/formats",
+        json={"label": "Post", "price": "10.00"},
+        headers=_auth_headers(owner_id),
+    )
+    return response.json()["id"]
+
+
 def test_create_listing_success(client: TestClient, db_engine) -> None:
     channel_id = _create_channel(client, owner_id=123, username="@ownerchannel")
 
@@ -198,6 +207,28 @@ def test_create_format_success(client: TestClient, db_engine) -> None:
     with Session(db_engine) as session:
         listing_format = session.exec(select(ListingFormat).where(ListingFormat.listing_id == listing_id)).one()
         assert listing_format.label == "Post"
+
+
+def test_channel_listing_read_endpoint(client: TestClient, db_engine) -> None:
+    channel_id = _create_channel(client, owner_id=123, username="@ownerchannel")
+    listing_id = _create_listing(client, channel_id, owner_id=123)
+    _create_listing_format(client, listing_id, owner_id=123)
+
+    response = client.get(f"/channels/{channel_id}/listing", headers=_auth_headers(123))
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["has_listing"] is True
+    assert payload["listing"]["id"] == listing_id
+    assert len(payload["listing"]["formats"]) == 1
+
+
+def test_channel_listing_read_returns_has_listing_false(client: TestClient) -> None:
+    channel_id = _create_channel(client, owner_id=123, username="@ownerchannel")
+
+    response = client.get(f"/channels/{channel_id}/listing", headers=_auth_headers(123))
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["has_listing"] is False
 
 
 def test_create_format_duplicate_label_conflict(client: TestClient) -> None:

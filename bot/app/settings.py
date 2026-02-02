@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     TELEGRAM_API_HASH: str | None = None
     TELEGRAM_ENABLED: bool = True
     TELEGRAM_SESSION_NAME: str = "tgads_backend"
+    TELEGRAM_MEDIA_CHANNEL_ID: int | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

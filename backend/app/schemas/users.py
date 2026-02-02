@@ -11,3 +11,11 @@ class UserWalletSummary(BaseModel):
     id: int
     telegram_user_id: int
     ton_wallet_address: str | None
+
+
+class UserPreferencesUpdate(BaseModel):
+    preferred_role: str
+
+
+class UserPreferencesSummary(BaseModel):
+    preferred_role: str | None

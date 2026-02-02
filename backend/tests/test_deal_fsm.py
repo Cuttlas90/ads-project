@@ -101,7 +101,7 @@ def test_invalid_transition_rejected(db_engine) -> None:
             )
 
 
-def test_system_can_fund_accepted_deal(db_engine) -> None:
+def test_system_can_fund_creative_approved_deal(db_engine) -> None:
     with Session(db_engine) as session:
         deal = _seed_listing_deal(session)
         apply_transition(
@@ -117,6 +117,20 @@ def test_system_can_fund_accepted_deal(db_engine) -> None:
             action=DealAction.accept.value,
             actor_id=deal.channel_owner_id,
             actor_role=DealActorRole.channel_owner.value,
+        )
+        apply_transition(
+            session,
+            deal=deal,
+            action=DealAction.creative_submit.value,
+            actor_id=deal.channel_owner_id,
+            actor_role=DealActorRole.channel_owner.value,
+        )
+        apply_transition(
+            session,
+            deal=deal,
+            action=DealAction.creative_approve.value,
+            actor_id=deal.advertiser_id,
+            actor_role=DealActorRole.advertiser.value,
         )
         apply_transition(
             session,
@@ -147,7 +161,7 @@ def test_system_transition_requires_null_actor(db_engine) -> None:
 def test_system_posting_and_verification_transitions(db_engine) -> None:
     with Session(db_engine) as session:
         deal = _seed_listing_deal(session)
-        deal.state = DealState.CREATIVE_APPROVED.value
+        deal.state = DealState.FUNDED.value
         session.add(deal)
         session.commit()
 
@@ -183,6 +197,57 @@ def test_system_posting_and_verification_transitions(db_engine) -> None:
         session.refresh(deal)
 
         assert deal.state == DealState.RELEASED.value
+
+
+def test_creative_edit_loop_transitions(db_engine) -> None:
+    with Session(db_engine) as session:
+        deal = _seed_listing_deal(session)
+        apply_transition(
+            session,
+            deal=deal,
+            action=DealAction.propose.value,
+            actor_id=deal.advertiser_id,
+            actor_role=DealActorRole.advertiser.value,
+        )
+        apply_transition(
+            session,
+            deal=deal,
+            action=DealAction.accept.value,
+            actor_id=deal.channel_owner_id,
+            actor_role=DealActorRole.channel_owner.value,
+        )
+        apply_transition(
+            session,
+            deal=deal,
+            action=DealAction.creative_submit.value,
+            actor_id=deal.channel_owner_id,
+            actor_role=DealActorRole.channel_owner.value,
+        )
+        apply_transition(
+            session,
+            deal=deal,
+            action=DealAction.creative_request_edits.value,
+            actor_id=deal.advertiser_id,
+            actor_role=DealActorRole.advertiser.value,
+        )
+        apply_transition(
+            session,
+            deal=deal,
+            action=DealAction.creative_submit.value,
+            actor_id=deal.channel_owner_id,
+            actor_role=DealActorRole.channel_owner.value,
+        )
+        apply_transition(
+            session,
+            deal=deal,
+            action=DealAction.creative_approve.value,
+            actor_id=deal.advertiser_id,
+            actor_role=DealActorRole.advertiser.value,
+        )
+        session.commit()
+        session.refresh(deal)
+
+        assert deal.state == DealState.CREATIVE_APPROVED.value
 
 
 def test_system_can_refund_posted_deal(db_engine) -> None:

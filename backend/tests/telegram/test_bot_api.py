@@ -95,3 +95,32 @@ def test_bot_api_missing_token(monkeypatch) -> None:
 
     with pytest.raises(TelegramConfigError):
         service.send_message(chat_id=1, text="blocked")
+
+
+def test_upload_media_returns_file_id(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, data: dict, files: dict) -> DummyResponse:
+        captured["url"] = url
+        captured["data"] = data
+        captured["files"] = files
+        return DummyResponse(
+            200,
+            {"ok": True, "result": {"photo": [{"file_id": "file-1"}, {"file_id": "file-2"}]}},
+        )
+
+    monkeypatch.setattr(bot_api.httpx, "post", fake_post)
+
+    settings = Settings(
+        _env_file=None,
+        TELEGRAM_ENABLED=True,
+        TELEGRAM_BOT_TOKEN="token",
+        TELEGRAM_MEDIA_CHANNEL_ID=123,
+    )
+    service = BotApiService(settings)
+
+    response = service.upload_media(media_type="image", filename="photo.jpg", content=b"data")
+
+    assert response["file_id"] == "file-2"
+    assert response["media_type"] == "image"
+    assert captured["data"]["chat_id"] == 123

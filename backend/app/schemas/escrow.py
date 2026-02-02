@@ -18,3 +18,11 @@ class TonConnectTxResponse(BaseModel):
     escrow_id: int
     deal_id: int
     payload: dict
+
+
+class EscrowStatusResponse(BaseModel):
+    state: str
+    deposit_address: str | None
+    expected_amount_ton: Decimal | None
+    received_amount_ton: Decimal | None
+    deposit_confirmations: int

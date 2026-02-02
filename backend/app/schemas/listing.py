@@ -35,3 +35,12 @@ class ListingFormatSummary(BaseModel):
     listing_id: int
     label: str
     price: Decimal
+
+
+class ListingDetail(ListingSummary):
+    formats: list[ListingFormatSummary]
+
+
+class ChannelListingResponse(BaseModel):
+    has_listing: bool
+    listing: ListingDetail | None = None

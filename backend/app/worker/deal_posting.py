@@ -32,7 +32,7 @@ def _post_due_deals(
         select(Deal)
         .where(Deal.scheduled_at.is_not(None))
         .where(Deal.scheduled_at <= now)
-        .where(Deal.state.in_([DealState.CREATIVE_APPROVED.value, DealState.SCHEDULED.value]))
+        .where(Deal.state.in_([DealState.FUNDED.value, DealState.SCHEDULED.value]))
     ).all()
 
     processed = 0
@@ -43,7 +43,7 @@ def _post_due_deals(
             continue
 
         try:
-            if deal.state == DealState.CREATIVE_APPROVED.value:
+            if deal.state == DealState.FUNDED.value:
                 apply_transition(
                     db,
                     deal=deal,

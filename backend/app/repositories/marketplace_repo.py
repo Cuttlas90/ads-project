@@ -18,6 +18,7 @@ PREMIUM_RATIO_KEY = "premium_ratio"
 
 @dataclass(frozen=True)
 class MarketplaceListingFormatResult:
+    id: int
     label: str
     price: Decimal
 
@@ -246,6 +247,7 @@ def _load_formats(
     rows = db.exec(
         select(
             ListingFormat.listing_id,
+            ListingFormat.id,
             ListingFormat.label,
             ListingFormat.price,
         )
@@ -257,6 +259,7 @@ def _load_formats(
     for format_row in rows:
         formats_by_listing.setdefault(format_row.listing_id, []).append(
             MarketplaceListingFormatResult(
+                id=format_row.id,
                 label=format_row.label,
                 price=format_row.price,
             )

@@ -59,6 +59,58 @@ class DealSummary(BaseModel):
     updated_at: datetime
 
 
+class DealInboxItem(BaseModel):
+    id: int
+    state: str
+    channel_id: int
+    channel_username: str | None
+    channel_title: str | None
+    advertiser_id: int
+    price_ton: Decimal
+    ad_type: str
+    updated_at: datetime
+
+
+class DealInboxPage(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    items: list[DealInboxItem]
+
+
+class DealDetail(DealSummary):
+    channel_username: str | None
+    channel_title: str | None
+    advertiser_username: str | None
+    advertiser_first_name: str | None
+    advertiser_last_name: str | None
+
+
+class DealCreativeSubmit(BaseModel):
+    creative_text: str
+    creative_media_type: str
+    creative_media_ref: str
+
+
+class DealCreativeUploadResponse(BaseModel):
+    creative_media_ref: str
+    creative_media_type: str
+
+
+class DealTimelineEvent(BaseModel):
+    event_type: str
+    from_state: str | None
+    to_state: str | None
+    payload: dict | list | None
+    created_at: datetime
+    actor_id: int | None
+
+
+class DealTimelinePage(BaseModel):
+    items: list[DealTimelineEvent]
+    next_cursor: str | None = None
+
+
 class DealMessageCreate(BaseModel):
     text: str
 

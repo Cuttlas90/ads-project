@@ -19,6 +19,8 @@ from app.models.campaign_application import CampaignApplication
 from app.models.channel import Channel
 from app.models.deal import Deal, DealSourceType, DealState
 from app.models.deal_event import DealEvent
+from app.models.deal_escrow import DealEscrow
+from app.models.escrow_event import EscrowEvent
 from app.models.listing import Listing
 from app.models.listing_format import ListingFormat
 from app.models.user import User
@@ -27,6 +29,7 @@ from shared.db.base import SQLModel
 import shared.telegram.bot_api as bot_api
 
 BOT_TOKEN = "test-bot-token"
+_CHANNEL_SEQ = 0
 
 
 def build_init_data(payload: dict[str, str], bot_token: str = BOT_TOKEN) -> str:
@@ -56,7 +59,11 @@ def client(db_engine):
             yield session
 
     def override_get_settings() -> Settings:
-        return Settings(_env_file=None, TELEGRAM_BOT_TOKEN=BOT_TOKEN)
+        return Settings(
+            _env_file=None,
+            TELEGRAM_BOT_TOKEN=BOT_TOKEN,
+            TELEGRAM_MEDIA_CHANNEL_ID=123,
+        )
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_settings_dep] = override_get_settings
@@ -66,7 +73,7 @@ def client(db_engine):
 
 
 def _user_payload(user_id: int) -> str:
-    return json.dumps({"id": user_id, "first_name": "Ada", "username": "ada"})
+    return json.dumps({"id": user_id, "first_name": "Ada", "last_name": "Lovelace", "username": "ada"})
 
 
 def _auth_headers(user_id: int) -> dict[str, str]:
@@ -124,7 +131,9 @@ def _mark_channel_verified(db_engine, channel_id: int) -> None:
 
 
 def _create_listing_deal(client: TestClient, advertiser_id: int, owner_id: int) -> int:
-    channel_id = _create_channel(client, owner_id=owner_id, username=f"@chan{owner_id}")
+    global _CHANNEL_SEQ
+    _CHANNEL_SEQ += 1
+    channel_id = _create_channel(client, owner_id=owner_id, username=f"@chan{owner_id}_{_CHANNEL_SEQ}")
     listing_id = _create_listing(client, channel_id=channel_id, owner_id=owner_id)
     format_id = _create_listing_format(client, listing_id=listing_id, owner_id=owner_id)
 
@@ -249,3 +258,168 @@ def test_send_deal_message(client: TestClient, monkeypatch) -> None:
     payload = response.json()
     assert payload["deal_id"] == deal_id
     assert payload["text"] == "Hello"
+
+
+def test_deals_inbox_filters_and_pagination(client: TestClient, db_engine) -> None:
+    deal_id_one = _create_listing_deal(client, advertiser_id=101, owner_id=202)
+    deal_id_two = _create_listing_deal(client, advertiser_id=101, owner_id=202)
+
+    with Session(db_engine) as session:
+        deal_one = session.exec(select(Deal).where(Deal.id == deal_id_one)).one()
+        deal_two = session.exec(select(Deal).where(Deal.id == deal_id_two)).one()
+        deal_one.state = DealState.CREATIVE_SUBMITTED.value
+        deal_two.state = DealState.ACCEPTED.value
+        session.add(deal_one)
+        session.add(deal_two)
+        session.commit()
+
+    response = client.get("/deals?role=owner&state=CREATIVE_SUBMITTED&page=1&page_size=20", headers=_auth_headers(202))
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["id"] == deal_id_one
+
+    response = client.get("/deals?role=owner&page=1&page_size=1", headers=_auth_headers(202))
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["page_size"] == 1
+    assert len(payload["items"]) == 1
+
+
+def test_deal_detail_participant_fields(client: TestClient, db_engine) -> None:
+    deal_id = _create_listing_deal(client, advertiser_id=101, owner_id=202)
+
+    with Session(db_engine) as session:
+        deal = session.exec(select(Deal).where(Deal.id == deal_id)).one()
+        channel = session.exec(select(Channel).where(Channel.id == deal.channel_id)).one()
+        channel.title = "Channel Title"
+        session.add(channel)
+        advertiser = session.exec(select(User).where(User.id == deal.advertiser_id)).one()
+        advertiser.first_name = "Ada"
+        advertiser.last_name = "Lovelace"
+        session.add(advertiser)
+        session.commit()
+
+    response = client.get(f"/deals/{deal_id}", headers=_auth_headers(101))
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["channel_title"] == "Channel Title"
+    assert payload["advertiser_first_name"] == "Ada"
+    assert payload["advertiser_last_name"] == "Lovelace"
+
+    response = client.get(f"/deals/{deal_id}", headers=_auth_headers(999))
+    assert response.status_code == 403
+
+
+def test_deal_timeline_merges_events(client: TestClient, db_engine) -> None:
+    deal_id = _create_listing_deal(client, advertiser_id=101, owner_id=202)
+    with Session(db_engine) as session:
+        deal = session.exec(select(Deal).where(Deal.id == deal_id)).one()
+        escrow = DealEscrow(
+            deal_id=deal.id,
+            state="CREATED",
+            expected_amount_ton=deal.price_ton,
+            received_amount_ton=Decimal("0"),
+            fee_percent=Decimal("1.00"),
+        )
+        session.add(escrow)
+        session.flush()
+
+        session.add(
+            DealEvent(
+                deal_id=deal.id,
+                actor_id=deal.advertiser_id,
+                event_type="transition",
+                from_state="DRAFT",
+                to_state="NEGOTIATION",
+            )
+        )
+        session.add(
+            EscrowEvent(
+                escrow_id=escrow.id,
+                actor_user_id=None,
+                from_state=None,
+                to_state="CREATED",
+                event_type="created",
+                payload=None,
+            )
+        )
+        session.commit()
+
+    response = client.get(f"/deals/{deal_id}/events?limit=1", headers=_auth_headers(101))
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["items"]) == 1
+    assert payload["next_cursor"] is not None
+
+    response_page_two = client.get(
+        f"/deals/{deal_id}/events",
+        headers=_auth_headers(101),
+        params={"cursor": payload["next_cursor"], "limit": 1},
+    )
+    assert response_page_two.status_code == 200
+    payload_two = response_page_two.json()
+    assert len(payload_two["items"]) == 1
+
+
+def test_creative_endpoints_flow(client: TestClient, db_engine) -> None:
+    deal_id = _create_listing_deal(client, advertiser_id=101, owner_id=202)
+    client.post(f"/deals/{deal_id}/accept", headers=_auth_headers(202))
+
+    response = client.post(
+        f"/deals/{deal_id}/creative/submit",
+        json={
+            "creative_text": "New creative",
+            "creative_media_type": "image",
+            "creative_media_ref": "file-id",
+        },
+        headers=_auth_headers(202),
+    )
+    assert response.status_code == 200
+    assert response.json()["state"] == DealState.CREATIVE_SUBMITTED.value
+
+    response = client.post(f"/deals/{deal_id}/creative/request-edits", headers=_auth_headers(101))
+    assert response.status_code == 200
+    assert response.json()["state"] == DealState.CREATIVE_CHANGES_REQUESTED.value
+
+    response = client.post(
+        f"/deals/{deal_id}/creative/submit",
+        json={
+            "creative_text": "Updated creative",
+            "creative_media_type": "image",
+            "creative_media_ref": "file-id-2",
+        },
+        headers=_auth_headers(202),
+    )
+    assert response.status_code == 200
+    assert response.json()["state"] == DealState.CREATIVE_SUBMITTED.value
+
+    response = client.post(f"/deals/{deal_id}/creative/approve", headers=_auth_headers(101))
+    assert response.status_code == 200
+    assert response.json()["state"] == DealState.CREATIVE_APPROVED.value
+
+
+def test_creative_upload_endpoint(client: TestClient, monkeypatch) -> None:
+    def fake_post(url: str, data: dict, files: dict):
+        class DummyResponse:
+            status_code = 200
+
+            def json(self) -> dict:
+                return {"ok": True, "result": {"photo": [{"file_id": "file-1"}]}}
+
+        return DummyResponse()
+
+    monkeypatch.setattr(bot_api.httpx, "post", fake_post)
+
+    deal_id = _create_listing_deal(client, advertiser_id=101, owner_id=202)
+    client.post(f"/deals/{deal_id}/accept", headers=_auth_headers(202))
+
+    response = client.post(
+        f"/deals/{deal_id}/creative/upload",
+        files={"file": ("photo.jpg", b"data", "image/jpeg")},
+        headers=_auth_headers(202),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["creative_media_ref"] == "file-1"
+    assert payload["creative_media_type"] == "image"
