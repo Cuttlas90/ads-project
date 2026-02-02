@@ -4,7 +4,7 @@
 TBD - created by archiving change add-telegram-client-wrappers. Update Purpose after archive.
 ## Requirements
 ### Requirement: Telegram integration settings
-The backend and bot services SHALL define `TELEGRAM_ENABLED` (default `true`), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, and `TELEGRAM_SESSION_NAME` (default `"tgads_backend"`) in settings. Telegram service methods SHALL fail fast with a clear configuration error when `TELEGRAM_ENABLED` is false or required credentials are missing.
+The backend and bot services SHALL define `TELEGRAM_ENABLED` (default `true`), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_SESSION_NAME` (default `"tgads_backend"`), and `TELEGRAM_MEDIA_CHANNEL_ID`. Telegram service methods SHALL fail fast with a clear configuration error when `TELEGRAM_ENABLED` is false or required credentials are missing.
 
 #### Scenario: Telegram disabled
 - **WHEN** `TELEGRAM_ENABLED` is false and a Telegram service method is called
@@ -32,10 +32,16 @@ The system SHALL provide `shared/telegram/bot_api.py` with a `BotApiService` tha
 - **WHEN** the Bot API responds with a non-200 status
 - **THEN** `send_message` raises a controlled error that includes response details
 
+### Requirement: Bot API media upload helper
+The system SHALL provide a Bot API helper that uploads `image` or `video` media to `TELEGRAM_MEDIA_CHANNEL_ID` and returns the resulting Telegram `file_id` and media type. It SHALL raise a controlled error on non-200 responses.
+
+#### Scenario: Media upload returns file id
+- **WHEN** media is uploaded to the Telegram Bot API
+- **THEN** the response includes the Telegram `file_id` for the uploaded media
+
 ### Requirement: Telegram package exports
 The system SHALL expose `TelegramClientService` and `BotApiService` from `shared/telegram/__init__.py`.
 
 #### Scenario: Import convenience
 - **WHEN** a caller imports from `app.telegram`
 - **THEN** `TelegramClientService` and `BotApiService` are available for use
-
