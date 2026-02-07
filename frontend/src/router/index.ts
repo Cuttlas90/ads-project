@@ -1,8 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import type { RouteRecordRaw } from 'vue-router'
 
-import LandingView from '../views/LandingView.vue'
+import { useAuthStore } from '../stores/auth'
 import OwnerHomeView from '../views/OwnerHomeView.vue'
-import AdvertiserHomeView from '../views/AdvertiserHomeView.vue'
 import DealDetailView from '../views/DealDetailView.vue'
 import ChannelVerifyView from '../views/ChannelVerifyView.vue'
 import ListingEditorView from '../views/ListingEditorView.vue'
@@ -13,34 +13,127 @@ import CampaignCreateView from '../views/CampaignCreateView.vue'
 import AdvertiserDealsView from '../views/AdvertiserDealsView.vue'
 import AdvertiserCreativeReviewView from '../views/AdvertiserCreativeReviewView.vue'
 import FundingView from '../views/FundingView.vue'
+import EntryResolverView from '../views/EntryResolverView.vue'
+import ProfileView from '../views/ProfileView.vue'
+import type { RouteAccess } from './roleAccess'
+import { resolveAccessRedirect } from './roleAccess'
 
-const routes = [
-  { path: '/', name: 'landing', component: LandingView },
-  { path: '/owner', name: 'owner-home', component: OwnerHomeView },
-  { path: '/owner/channels/:id/verify', name: 'channel-verify', component: ChannelVerifyView },
-  { path: '/owner/channels/:id/listing', name: 'listing-editor', component: ListingEditorView },
-  { path: '/owner/deals', name: 'owner-deals', component: OwnerDealsView },
+interface AppRouteMeta {
+  access: RouteAccess
+  allowNullRole?: boolean
+}
+
+const routeMeta = (access: RouteAccess, allowNullRole = false): AppRouteMeta => ({
+  access,
+  allowNullRole,
+})
+
+const routes: RouteRecordRaw[] = [
+  {
+    path: '/',
+    name: 'entry-resolver',
+    component: EntryResolverView,
+    meta: routeMeta('resolver'),
+  },
+  {
+    path: '/profile',
+    name: 'profile',
+    component: ProfileView,
+    meta: routeMeta('shared', true),
+  },
+  { path: '/owner', name: 'owner-home', component: OwnerHomeView, meta: routeMeta('owner') },
+  {
+    path: '/owner/channels/:id/verify',
+    name: 'channel-verify',
+    component: ChannelVerifyView,
+    meta: routeMeta('owner'),
+  },
+  {
+    path: '/owner/channels/:id/listing',
+    name: 'listing-editor',
+    component: ListingEditorView,
+    meta: routeMeta('owner'),
+  },
+  { path: '/owner/deals', name: 'owner-deals', component: OwnerDealsView, meta: routeMeta('owner') },
   {
     path: '/owner/deals/:id/creative',
     name: 'owner-creative-submit',
     component: OwnerCreativeSubmitView,
+    meta: routeMeta('owner'),
   },
-  { path: '/advertiser', name: 'advertiser-home', component: AdvertiserHomeView },
-  { path: '/advertiser/marketplace', name: 'marketplace', component: MarketplaceView },
-  { path: '/advertiser/campaigns/new', name: 'campaign-create', component: CampaignCreateView },
-  { path: '/advertiser/deals', name: 'advertiser-deals', component: AdvertiserDealsView },
+  {
+    path: '/advertiser',
+    name: 'advertiser-home',
+    redirect: '/advertiser/marketplace',
+    meta: routeMeta('advertiser'),
+  },
+  {
+    path: '/advertiser/marketplace',
+    name: 'marketplace',
+    component: MarketplaceView,
+    meta: routeMeta('advertiser'),
+  },
+  {
+    path: '/advertiser/campaigns/new',
+    name: 'campaign-create',
+    component: CampaignCreateView,
+    meta: routeMeta('advertiser'),
+  },
+  {
+    path: '/advertiser/deals',
+    name: 'advertiser-deals',
+    component: AdvertiserDealsView,
+    meta: routeMeta('advertiser'),
+  },
   {
     path: '/advertiser/deals/:id/review',
     name: 'advertiser-creative-review',
     component: AdvertiserCreativeReviewView,
+    meta: routeMeta('advertiser'),
   },
-  { path: '/advertiser/deals/:id/fund', name: 'funding', component: FundingView },
-  { path: '/deals/:id', name: 'deal-detail', component: DealDetailView },
+  {
+    path: '/advertiser/deals/:id/fund',
+    name: 'funding',
+    component: FundingView,
+    meta: routeMeta('advertiser'),
+  },
+  {
+    path: '/deals/:id',
+    name: 'deal-detail',
+    component: DealDetailView,
+    meta: routeMeta('shared'),
+  },
+  {
+    path: '/:pathMatch(.*)*',
+    name: 'not-found',
+    component: EntryResolverView,
+    meta: routeMeta('resolver'),
+  },
 ]
 
 const router = createRouter({
   history: createWebHistory(),
   routes,
+})
+
+router.beforeEach(async (to) => {
+  const authStore = useAuthStore()
+  if (!authStore.bootstrapped) {
+    await authStore.bootstrap()
+  }
+
+  const role = authStore.user?.preferred_role ?? null
+  const meta = (to.meta ?? {}) as Partial<AppRouteMeta>
+  const access = meta.access ?? 'shared'
+  const redirect = resolveAccessRedirect(access, role, Boolean(meta.allowNullRole))
+
+  if (typeof redirect === 'string') {
+    if (redirect === to.path) {
+      return true
+    }
+    return redirect
+  }
+  return true
 })
 
 export default router

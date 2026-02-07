@@ -47,6 +47,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { TgBadge, TgButton, TgCard, TgList, TgSkeleton, TgStatePanel } from '../components/tg'
+import { resolveRoleDefaultPath, isForbiddenMessage } from '../router/roleAccess'
 import { dealsService } from '../services/deals'
 import { useAuthStore } from '../stores/auth'
 import type { DealDetail, DealTimelineEvent } from '../types/api'
@@ -70,7 +71,12 @@ const loadDeal = async () => {
     const timeline = await dealsService.events(dealId)
     events.value = timeline.items
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to load deal'
+    const message = err instanceof Error ? err.message : 'Failed to load deal'
+    if (isForbiddenMessage(message)) {
+      await router.replace(resolveRoleDefaultPath(authStore.user?.preferred_role ?? null))
+      return
+    }
+    error.value = message
   }
 }
 
@@ -122,7 +128,9 @@ const botLink = computed(() => {
 })
 
 onMounted(() => {
-  void authStore.fetchMe()
+  if (!authStore.bootstrapped) {
+    void authStore.bootstrap()
+  }
   void loadDeal()
 })
 </script>
