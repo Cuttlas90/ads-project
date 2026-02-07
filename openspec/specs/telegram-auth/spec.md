@@ -4,14 +4,20 @@
 TBD - created by archiving change add-telegram-miniapp-auth. Update Purpose after archive.
 ## Requirements
 ### Requirement: Telegram Mini App initData verification
-The backend SHALL validate Telegram Mini App initData signatures using the bot token per Telegram's documented algorithm. It SHALL compute the data check string by removing the `hash` key, sorting remaining `key=value` pairs alphabetically, joining with `\n`, and comparing an HMAC-SHA256 (secret key = `sha256(bot_token)`) against the provided hash. It SHALL reject initData with missing or invalid hash values, missing `auth_date`, or `auth_date` older than 24 hours.
+The backend SHALL validate Telegram Mini App `initData` signatures using the bot token per Telegram Mini App documentation. It SHALL compute the data-check-string by removing the `hash` key, sorting remaining `key=value` pairs alphabetically, and joining with `\n`. It SHALL derive the HMAC secret key as `HMAC_SHA256(key="WebAppData", msg=bot_token)` and then compare an HMAC-SHA256 of the data-check-string against the provided `hash`. It SHALL reject `initData` with missing or invalid hash values, missing `auth_date`, or `auth_date` older than 24 hours.
 
-#### Scenario: Valid initData
-- **WHEN** a request provides initData with a correct hash and `auth_date` within 24 hours
-- **THEN** verification succeeds and returns the parsed initData payload
+The backend SHALL NOT accept Telegram Login Widget signature derivation (`sha256(bot_token)` secret key) for Mini App authentication endpoints.
 
-#### Scenario: Invalid initData
-- **WHEN** a request provides initData with a missing/invalid hash or an `auth_date` older than 24 hours
+#### Scenario: Valid Mini App initData
+- **WHEN** a request provides `initData` with a correct Mini App hash and `auth_date` within 24 hours
+- **THEN** verification succeeds and returns the parsed `initData` payload
+
+#### Scenario: Login Widget signature model rejected
+- **WHEN** a request provides `initData` whose hash was generated with Login Widget derivation (`sha256(bot_token)` secret key)
+- **THEN** verification fails with an authentication error
+
+#### Scenario: Invalid or expired initData
+- **WHEN** a request provides `initData` with a missing or invalid hash, missing `auth_date`, or an `auth_date` older than 24 hours
 - **THEN** verification fails with an authentication error
 
 ### Requirement: Telegram-only authentication
@@ -56,3 +62,4 @@ The backend SHALL expose `PUT /users/me/preferences` requiring authentication. I
 #### Scenario: User sets role preference
 - **WHEN** an authenticated user sets `preferred_role = owner`
 - **THEN** the response is HTTP 200 and includes `preferred_role = owner`
+

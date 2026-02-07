@@ -26,7 +26,7 @@ BOT_TOKEN = "test-bot-token"
 def build_init_data(payload: dict[str, str], bot_token: str = BOT_TOKEN) -> str:
     data = {key: str(value) for key, value in payload.items()}
     data_check_string = "\n".join(f"{key}={data[key]}" for key in sorted(data))
-    secret_key = hashlib.sha256(bot_token.encode()).digest()
+    secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
     data["hash"] = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
     return urlencode(data)
 

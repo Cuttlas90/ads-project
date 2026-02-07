@@ -34,7 +34,9 @@ def verify_init_data(init_data: str, bot_token: str) -> dict[str, str]:
         raise AuthError("Missing hash")
 
     check_string = _build_data_check_string(data)
-    secret_key = hashlib.sha256(bot_token.encode()).digest()
+    # Mini App-only verification: this uses WebAppData derivation and intentionally
+    # does not support Telegram Login Widget's sha256(bot_token) secret model.
+    secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
     computed_hash = hmac.new(secret_key, check_string.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(computed_hash, provided_hash):
         raise AuthError("Invalid hash")
