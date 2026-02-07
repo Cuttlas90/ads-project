@@ -85,7 +85,19 @@ def test_unregistered_user_prompt(db_engine) -> None:
     with Session(db_engine) as session:
         handle_update(update=_make_update(555, "/deals"), db=session, bot_api=bot, settings=settings)
 
-    assert bot.sent[-1]["text"] == "Please open the app to register"
+    assert bot.sent[-1]["text"] == "Please run /start to register first."
+
+
+def test_start_registers_user(db_engine) -> None:
+    bot = FakeBotApi()
+    settings = Settings(_env_file=None, TELEGRAM_BOT_TOKEN="token")
+
+    with Session(db_engine) as session:
+        handle_update(update=_make_update(555, "/start"), db=session, bot_api=bot, settings=settings)
+        user = session.exec(select(User).where(User.telegram_user_id == 555)).first()
+        assert user is not None
+
+    assert bot.sent[-1]["text"] == "Welcome! Use /deals to open your active deals."
 
 
 def test_non_text_message_rejected(db_engine) -> None:

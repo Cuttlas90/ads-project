@@ -22,6 +22,11 @@ class IncomingMessage:
     update_id: int
     chat_id: int
     telegram_user_id: int
+    username: str | None
+    first_name: str | None
+    last_name: str | None
+    language_code: str | None
+    is_premium: bool | None
     text: str | None
     is_text: bool
 
@@ -37,10 +42,16 @@ def parse_update(update: dict[str, Any]) -> IncomingMessage | None:
     if chat_id is None or telegram_user_id is None:
         return None
     text = message.get("text")
+    is_premium = sender.get("is_premium")
     return IncomingMessage(
         update_id=update.get("update_id"),
         chat_id=chat_id,
         telegram_user_id=telegram_user_id,
+        username=sender.get("username"),
+        first_name=sender.get("first_name"),
+        last_name=sender.get("last_name"),
+        language_code=sender.get("language_code"),
+        is_premium=is_premium if isinstance(is_premium, bool) else None,
         text=text,
         is_text=isinstance(text, str),
     )
@@ -49,6 +60,50 @@ def parse_update(update: dict[str, Any]) -> IncomingMessage | None:
 def build_reply_keyboard(options: list[str]) -> dict[str, Any]:
     keyboard = [[{"text": option}] for option in options]
     return {"keyboard": keyboard, "resize_keyboard": True, "one_time_keyboard": True}
+
+
+def _upsert_user_from_incoming(*, db: Session, incoming: IncomingMessage) -> User:
+    now = datetime.now(timezone.utc)
+    user = db.exec(select(User).where(User.telegram_user_id == incoming.telegram_user_id)).first()
+    if user is None:
+        user = User(
+            telegram_user_id=incoming.telegram_user_id,
+            username=incoming.username,
+            first_name=incoming.first_name,
+            last_name=incoming.last_name,
+            language_code=incoming.language_code,
+            is_premium=incoming.is_premium,
+            last_login_at=now,
+        )
+    else:
+        user.username = incoming.username
+        user.first_name = incoming.first_name
+        user.last_name = incoming.last_name
+        user.language_code = incoming.language_code
+        user.is_premium = incoming.is_premium
+        user.last_login_at = now
+
+    db.add(user)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        user = db.exec(select(User).where(User.telegram_user_id == incoming.telegram_user_id)).first()
+        if user is None:
+            raise RuntimeError("Failed to register user from /start")
+        user.username = incoming.username
+        user.first_name = incoming.first_name
+        user.last_name = incoming.last_name
+        user.language_code = incoming.language_code
+        user.is_premium = incoming.is_premium
+        user.last_login_at = now
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    else:
+        db.refresh(user)
+
+    return user
 
 
 def handle_update(
@@ -62,16 +117,21 @@ def handle_update(
     if incoming is None:
         return
 
+    text = (incoming.text or "").strip() if incoming.is_text else ""
+    if text.startswith("/start"):
+        _upsert_user_from_incoming(db=db, incoming=incoming)
+        bot_api.send_message(chat_id=incoming.chat_id, text="Welcome! Use /deals to open your active deals.")
+        return
+
     user = db.exec(select(User).where(User.telegram_user_id == incoming.telegram_user_id)).first()
     if user is None:
-        bot_api.send_message(chat_id=incoming.chat_id, text="Please open the app to register")
+        bot_api.send_message(chat_id=incoming.chat_id, text="Please run /start to register first.")
         return
 
     if not incoming.is_text:
         bot_api.send_message(chat_id=incoming.chat_id, text="Text only, please.")
         return
 
-    text = (incoming.text or "").strip()
     if not text:
         bot_api.send_message(chat_id=incoming.chat_id, text="Text only, please.")
         return

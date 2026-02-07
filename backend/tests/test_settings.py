@@ -15,6 +15,7 @@ _ENV_KEYS = [
     "TELEGRAM_ENABLED",
     "TELEGRAM_SESSION_NAME",
     "TELEGRAM_MEDIA_CHANNEL_ID",
+    "CORS_ALLOW_ORIGINS",
 ]
 
 
@@ -37,6 +38,11 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.TELEGRAM_ENABLED is True
     assert settings.TELEGRAM_SESSION_NAME == "tgads_backend"
     assert settings.TELEGRAM_MEDIA_CHANNEL_ID is None
+    assert settings.CORS_ALLOW_ORIGINS == [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://app.chainofwinners.com",
+    ]
 
 
 def test_settings_overrides(monkeypatch) -> None:
@@ -53,6 +59,7 @@ def test_settings_overrides(monkeypatch) -> None:
         "TELEGRAM_ENABLED": "false",
         "TELEGRAM_SESSION_NAME": "custom_session",
         "TELEGRAM_MEDIA_CHANNEL_ID": "123",
+        "CORS_ALLOW_ORIGINS": '["https://app.chainofwinners.com", "https://admin.chainofwinners.com"]',
     }
 
     for key, value in overrides.items():
@@ -73,6 +80,27 @@ def test_settings_overrides(monkeypatch) -> None:
     assert settings.TELEGRAM_ENABLED is False
     assert settings.TELEGRAM_SESSION_NAME == overrides["TELEGRAM_SESSION_NAME"]
     assert settings.TELEGRAM_MEDIA_CHANNEL_ID == int(overrides["TELEGRAM_MEDIA_CHANNEL_ID"])
+    assert settings.CORS_ALLOW_ORIGINS == [
+        "https://app.chainofwinners.com",
+        "https://admin.chainofwinners.com",
+    ]
+
+
+def test_settings_cors_csv_with_quotes(monkeypatch) -> None:
+    for key in _ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
+    monkeypatch.setenv(
+        "CORS_ALLOW_ORIGINS",
+        "'http://localhost:5173', \"https://app.chainofwinners.com\"",
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert settings.CORS_ALLOW_ORIGINS == [
+        "http://localhost:5173",
+        "https://app.chainofwinners.com",
+    ]
 
 
 def test_get_settings_cached(monkeypatch) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
@@ -25,11 +26,11 @@ def _get_init_data(request: Request) -> str | None:
     return request.headers.get("X-Telegram-Init-Data") or request.query_params.get("initData")
 
 
-def get_current_user(
+def _parse_telegram_user(
+    *,
     request: Request,
-    db: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings_dep),
-) -> User:
+    settings: Settings,
+) -> tuple[int, dict[str, Any]]:
     init_data = _get_init_data(request)
     if not init_data:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing initData")
@@ -53,6 +54,24 @@ def get_current_user(
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing user id") from exc
 
+    return telegram_user_id, user_data
+
+
+def _update_user_from_payload(*, user: User, user_data: dict[str, Any], now: datetime) -> None:
+    user.username = user_data.get("username")
+    user.first_name = user_data.get("first_name")
+    user.last_name = user_data.get("last_name")
+    user.language_code = user_data.get("language_code")
+    user.is_premium = user_data.get("is_premium")
+    user.last_login_at = now
+
+
+def get_current_user(
+    request: Request,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings_dep),
+) -> User:
+    telegram_user_id, user_data = _parse_telegram_user(request=request, settings=settings)
     now = datetime.now(timezone.utc)
     user = db.exec(select(User).where(User.telegram_user_id == telegram_user_id)).first()
     if user is None:
@@ -66,12 +85,7 @@ def get_current_user(
             last_login_at=now,
         )
     else:
-        user.username = user_data.get("username")
-        user.first_name = user_data.get("first_name")
-        user.last_name = user_data.get("last_name")
-        user.language_code = user_data.get("language_code")
-        user.is_premium = user_data.get("is_premium")
-        user.last_login_at = now
+        _update_user_from_payload(user=user, user_data=user_data, now=now)
 
     db.add(user)
     try:
@@ -81,16 +95,31 @@ def get_current_user(
         user = db.exec(select(User).where(User.telegram_user_id == telegram_user_id)).first()
         if user is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Failed to persist user")
-        user.username = user_data.get("username")
-        user.first_name = user_data.get("first_name")
-        user.last_name = user_data.get("last_name")
-        user.language_code = user_data.get("language_code")
-        user.is_premium = user_data.get("is_premium")
-        user.last_login_at = now
+        _update_user_from_payload(user=user, user_data=user_data, now=now)
         db.add(user)
         db.commit()
         db.refresh(user)
     else:
         db.refresh(user)
 
+    return user
+
+
+def get_registered_user(
+    request: Request,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings_dep),
+) -> User:
+    telegram_user_id, user_data = _parse_telegram_user(request=request, settings=settings)
+    user = db.exec(select(User).where(User.telegram_user_id == telegram_user_id)).first()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User is not registered. Send /start to the bot first.",
+        )
+
+    _update_user_from_payload(user=user, user_data=user_data, now=datetime.now(timezone.utc))
+    db.add(user)
+    db.commit()
+    db.refresh(user)
     return user

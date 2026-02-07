@@ -62,6 +62,13 @@ def _user_payload(user_id: int) -> str:
     return json.dumps({"id": user_id, "first_name": "Ada", "username": "ada"})
 
 
+def _seed_user(db_engine, user_id: int) -> None:
+    with Session(db_engine) as session:
+        user = User(telegram_user_id=user_id, username="seeded")
+        session.add(user)
+        session.commit()
+
+
 def test_auth_me_missing_init_data(client: TestClient) -> None:
     response = client.get("/auth/me")
 
@@ -74,27 +81,24 @@ def test_auth_me_invalid_init_data(client: TestClient) -> None:
     assert response.status_code == 401
 
 
-def test_auth_me_creates_user(client: TestClient, db_engine) -> None:
+def test_auth_me_requires_registered_user(client: TestClient, db_engine) -> None:
     auth_date = str(int(time.time()))
     init_data = build_init_data({"auth_date": auth_date, "user": _user_payload(123)})
 
     response = client.get("/auth/me", headers={"X-Telegram-Init-Data": init_data})
 
-    assert response.status_code == 200
-    assert response.json()["telegram_user_id"] == 123
+    assert response.status_code == 401
+    assert "not registered" in response.json()["detail"].lower()
 
     with Session(db_engine) as session:
         user = session.exec(select(User).where(User.telegram_user_id == 123)).first()
-        assert user is not None
-        assert user.last_login_at is not None
+        assert user is None
 
 
 def test_auth_me_updates_last_login(client: TestClient, db_engine) -> None:
+    _seed_user(db_engine, 456)
     auth_date = str(int(time.time()))
     init_data = build_init_data({"auth_date": auth_date, "user": _user_payload(456)})
-
-    first_response = client.get("/auth/me", headers={"X-Telegram-Init-Data": init_data})
-    assert first_response.status_code == 200
 
     baseline = datetime(2000, 1, 1)
     with Session(db_engine) as session:
@@ -104,8 +108,8 @@ def test_auth_me_updates_last_login(client: TestClient, db_engine) -> None:
         session.add(user)
         session.commit()
 
-    second_response = client.get("/auth/me", headers={"X-Telegram-Init-Data": init_data})
-    assert second_response.status_code == 200
+    response = client.get("/auth/me", headers={"X-Telegram-Init-Data": init_data})
+    assert response.status_code == 200
 
     with Session(db_engine) as session:
         user = session.exec(select(User).where(User.telegram_user_id == 456)).first()
@@ -115,6 +119,7 @@ def test_auth_me_updates_last_login(client: TestClient, db_engine) -> None:
 
 
 def test_auth_me_ignores_external_user_id(client: TestClient, db_engine) -> None:
+    _seed_user(db_engine, 789)
     auth_date = str(int(time.time()))
     init_data = build_init_data({"auth_date": auth_date, "user": _user_payload(789)})
 
