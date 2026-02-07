@@ -1,10 +1,13 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+const ALLOW_QUERY_INITDATA_FALLBACK =
+  import.meta.env.DEV || import.meta.env.VITE_ALLOW_QUERY_INITDATA_FALLBACK === 'true'
 
 const getInitData = () => {
   if (typeof window === 'undefined') return null
   const tgInit = (window as typeof window & { Telegram?: { WebApp?: { initData?: string } } })
     .Telegram?.WebApp?.initData
   if (tgInit) return tgInit
+  if (!ALLOW_QUERY_INITDATA_FALLBACK) return null
   const params = new URLSearchParams(window.location.search)
   return params.get('initData')
 }
