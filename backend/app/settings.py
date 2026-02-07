@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from functools import lru_cache
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     TONCENTER_KEY: str | None = None
     TONCONNECT_MANIFEST_URL: str | None = None
     VERIFICATION_WINDOW_DEFAULT_HOURS: int = 24
+    CORS_ALLOW_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -43,6 +44,13 @@ class Settings(BaseSettings):
         if self.TON_NETWORK is None:
             self.TON_NETWORK = "testnet" if self.ENV == "dev" else "mainnet"
         return self
+
+    @field_validator("CORS_ALLOW_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
 
 
 @lru_cache
