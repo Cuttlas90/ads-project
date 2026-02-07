@@ -19,9 +19,10 @@ class DummyResponse:
 def test_send_message_success(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_post(url: str, json: dict) -> DummyResponse:
+    def fake_post(url: str, json: dict, timeout) -> DummyResponse:
         captured["url"] = url
         captured["json"] = json
+        captured["timeout"] = timeout
         return DummyResponse(200, {"ok": True, "result": {"message_id": 1}})
 
     monkeypatch.setattr(bot_api.httpx, "post", fake_post)
@@ -48,14 +49,16 @@ def test_send_message_success(monkeypatch) -> None:
         "disable_web_page_preview": False,
         "reply_markup": {"inline_keyboard": []},
     }
+    assert captured["timeout"].read == 20.0
 
 
 def test_get_updates_success(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_get(url: str, params: dict) -> DummyResponse:
+    def fake_get(url: str, params: dict, timeout) -> DummyResponse:
         captured["url"] = url
         captured["params"] = params
+        captured["timeout"] = timeout
         return DummyResponse(200, {"ok": True, "result": []})
 
     monkeypatch.setattr(bot_api.httpx, "get", fake_get)
@@ -67,10 +70,11 @@ def test_get_updates_success(monkeypatch) -> None:
     assert response["ok"] is True
     assert captured["url"] == "https://api.telegram.org/bottoken/getUpdates"
     assert captured["params"] == {"timeout": 5, "offset": 10}
+    assert captured["timeout"].read == 15.0
 
 
 def test_send_message_error(monkeypatch) -> None:
-    def fake_post(url: str, json: dict) -> DummyResponse:
+    def fake_post(url: str, json: dict, timeout) -> DummyResponse:
         return DummyResponse(400, {"ok": False}, text="bad request")
 
     monkeypatch.setattr(bot_api.httpx, "post", fake_post)
@@ -87,7 +91,7 @@ def test_send_message_error(monkeypatch) -> None:
 
 
 def test_get_updates_error(monkeypatch) -> None:
-    def fake_get(url: str, params: dict) -> DummyResponse:
+    def fake_get(url: str, params: dict, timeout) -> DummyResponse:
         return DummyResponse(500, {"ok": False}, text="bad")
 
     monkeypatch.setattr(bot_api.httpx, "get", fake_get)
