@@ -25,11 +25,17 @@ The system SHALL reuse `check_bot_permissions` from `backend/app/telegram/permis
 - **THEN** verification fails and no snapshot is stored
 
 ### Requirement: Telegram stats fetching and raw payload storage
-On successful permission checks, the system SHALL perform a Telethon preflight before channel stats RPC calls. The preflight MUST include a successful Telethon transport connection and an authorized Telethon session check. Only after preflight success SHALL the system fetch Telegram channel data using two calls: one for channel info/subscribers and one for channel statistics. It SHALL attempt to populate `subscribers`, `avg_views`, `language_stats`, and `premium_stats` where available, and SHALL store a combined `raw_stats` JSON object that includes both responses.
+On successful permission checks, the system SHALL perform a Telethon preflight before channel stats RPC calls. The preflight MUST include a successful Telethon transport connection and an authorized Telethon session check. Only after preflight success SHALL the system fetch Telegram channel data using `channels.getFullChannel`, `stats.getBroadcastStats`, and a best-effort `premium.getBoostsStatus` call. Verification SHALL attempt to populate `subscribers`, `avg_views`, `language_stats`, and `premium_stats` where available, and SHALL store a combined `raw_stats` JSON object that includes `full_channel`, `statistics`, and `boosts_status` payloads.
 
-#### Scenario: Stats fields missing
-- **WHEN** Telegram omits optional stats fields
-- **THEN** the snapshot is still stored with null parsed fields and the full raw payloads
+Premium ratio derivation in `premium_stats` SHALL prefer `statistics.premium_graph` when parseable, and SHALL fall back to `boosts_status.premium_audience.part/total` when premium graph data is absent. Failure of `premium.getBoostsStatus` SHALL NOT fail channel verification when other verification steps succeed.
+
+#### Scenario: Boosts fallback derives premium ratio
+- **WHEN** broadcast stats omit parseable premium graph data and boosts status contains premium audience counts
+- **THEN** verification stores snapshot `premium_stats` with premium ratio derived from `part / total`
+
+#### Scenario: Boosts fetch failure does not block verification
+- **WHEN** `premium.getBoostsStatus` fails but channel info and broadcast stats are fetched successfully
+- **THEN** verification still succeeds, marks the channel verified, and stores a snapshot with available stats
 
 #### Scenario: Telethon preflight fails
 - **WHEN** Telethon connection fails or the Telethon session is not authorized
@@ -59,3 +65,4 @@ The system SHALL preserve channel verification persistence integrity across Tele
 #### Scenario: No partial persistence on failure
 - **WHEN** a verification request fails due to Telethon connection, authorization, or Telegram stats errors
 - **THEN** channel verification state and snapshot history remain unchanged
+
