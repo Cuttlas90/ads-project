@@ -22,6 +22,7 @@ class MarketplaceListingStats(BaseModel):
 
 class MarketplaceListing(BaseModel):
     listing_id: int
+    channel_id: int
     channel_username: str | None
     channel_title: str | None
     formats: list[MarketplaceListingFormat]
