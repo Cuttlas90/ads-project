@@ -22,7 +22,22 @@ describe('ChannelStatsView', () => {
         { key: 'joins_per_post', availability: 'missing', reason: 'No data available in this snapshot.' },
       ],
       chart_metrics: [
-        { key: 'growth_graph', availability: 'ready', data: { points: [1, 2, 3] } },
+        {
+          key: 'growth_graph',
+          availability: 'ready',
+          data: {
+            _: 'DataJSON',
+            data: JSON.stringify({
+              columns: [
+                ['x', 1762560000000, 1762646400000, 1762732800000],
+                ['y0', 1, 3, 2],
+              ],
+              types: { x: 'x', y0: 'line' },
+              names: { y0: 'Joined' },
+              colors: { y0: 'GREEN#34C759' },
+            }),
+          },
+        },
         { key: 'premium_graph', availability: 'error', reason: 'Not enough data' },
         { key: 'interactions_graph', availability: 'async_pending', token: 'abc-token' },
         { key: 'shares_graph', availability: 'missing' },
@@ -66,6 +81,9 @@ describe('ChannelStatsView', () => {
 
     const chartTitles = wrapper.findAll('.stats__chart-title').map((item) => item.text())
     expect(chartTitles).toEqual(['growth_graph'])
+    expect(wrapper.find('svg').exists()).toBe(true)
+    expect(wrapper.findAll('polyline')).toHaveLength(1)
+    expect(wrapper.text()).toContain('Joined')
     expect(wrapper.text()).toContain('joins_per_post')
     expect(wrapper.text()).not.toContain('premium_graph')
     expect(wrapper.text()).not.toContain('interactions_graph')

@@ -72,7 +72,7 @@
           <div class="stats__charts">
             <article v-for="chart in visibleCharts" :key="chart.key" class="stats__chart">
               <p class="stats__chart-title">{{ chart.key }}</p>
-              <pre>{{ prettyChartData(chart.data) }}</pre>
+              <TelegramStatsChart :title="chart.key" :raw-data="chart.data" />
             </article>
           </div>
         </TgCard>
@@ -85,6 +85,7 @@
 import { computed, onMounted, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
+import TelegramStatsChart from '../components/charts/TelegramStatsChart.vue'
 import { TgBadge, TgCard, TgSkeleton, TgStatePanel } from '../components/tg'
 import { useAuthStore } from '../stores/auth'
 import { useChannelStatsStore } from '../stores/channelStats'
@@ -132,15 +133,6 @@ const formatMetricValue = (value: unknown): string => {
 const formatRatio = (value: number | null | undefined): string => {
   if (value === null || value === undefined) return '--'
   return `${(value * 100).toFixed(2)}%`
-}
-
-const prettyChartData = (value: unknown): string => {
-  if (value === null || value === undefined) return ''
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
 }
 
 watch(
@@ -241,12 +233,4 @@ onMounted(() => {
   text-transform: capitalize;
 }
 
-.stats__chart pre {
-  margin: 0;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--app-ink-muted);
-  font-size: 0.8rem;
-}
 </style>
