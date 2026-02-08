@@ -16,6 +16,8 @@ const mountAppWithRole = (role: RolePreference | null) => {
     id: 1,
     telegram_user_id: 99,
     preferred_role: role,
+    ton_wallet_address: null,
+    has_wallet: false,
   }
 
   const wrapper = mount(App, {

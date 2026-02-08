@@ -12,6 +12,7 @@ from app.models.escrow_event import EscrowEvent
 from app.models.listing import Listing
 from app.models.listing_format import ListingFormat
 from app.models.user import User
+from app.models.wallet_proof_challenge import WalletProofChallenge
 
 __all__ = [
     "CampaignApplication",
@@ -28,4 +29,5 @@ __all__ = [
     "Listing",
     "ListingFormat",
     "User",
+    "WalletProofChallenge",
 ]

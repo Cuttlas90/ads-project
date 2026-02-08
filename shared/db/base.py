@@ -13,6 +13,7 @@ from shared.db.models.escrow_event import EscrowEvent
 from shared.db.models.listing import Listing
 from shared.db.models.listing_format import ListingFormat
 from shared.db.models.users import User
+from shared.db.models.wallet_proof_challenge import WalletProofChallenge
 
 __all__ = [
     "CampaignApplication",
@@ -29,4 +30,5 @@ __all__ = [
     "ListingFormat",
     "SQLModel",
     "User",
+    "WalletProofChallenge",
 ]

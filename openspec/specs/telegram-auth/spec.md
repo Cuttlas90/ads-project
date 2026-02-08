@@ -50,11 +50,15 @@ The backend SHALL use `telegram_user_id` from verified initData to fetch or crea
 - **THEN** the existing user record is returned and `last_login_at` is updated
 
 ### Requirement: Auth verification endpoint
-The backend SHALL expose a protected `/auth/me` route that returns basic user information for verification/testing, including `preferred_role` (nullable).
+The backend SHALL expose a protected `/auth/me` route that returns basic user information for verification/testing, including `preferred_role` (nullable), `ton_wallet_address` (nullable), and `has_wallet` (boolean derived from wallet presence).
 
-#### Scenario: Authenticated request
-- **WHEN** a request with valid initData calls `/auth/me`
-- **THEN** the response includes the authenticated user's identifiers and `preferred_role`
+#### Scenario: Authenticated request with wallet set
+- **WHEN** a request with valid initData calls `/auth/me` for a user with a stored wallet
+- **THEN** the response includes user identifiers, `preferred_role`, `ton_wallet_address`, and `has_wallet = true`
+
+#### Scenario: Authenticated request without wallet
+- **WHEN** a request with valid initData calls `/auth/me` for a user without a stored wallet
+- **THEN** the response includes user identifiers, `preferred_role`, `ton_wallet_address = null`, and `has_wallet = false`
 
 ### Requirement: User role preference endpoint
 The backend SHALL expose `PUT /users/me/preferences` requiring authentication. It SHALL accept `preferred_role` with allowed values `owner` or `advertiser`, persist the value on the user record, and return the updated preference.

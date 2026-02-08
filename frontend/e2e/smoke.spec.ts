@@ -5,7 +5,13 @@ test('profile role picker renders for new users', async ({ page }) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ id: 1, telegram_user_id: 111, preferred_role: null }),
+      body: JSON.stringify({
+        id: 1,
+        telegram_user_id: 111,
+        preferred_role: null,
+        ton_wallet_address: null,
+        has_wallet: false,
+      }),
     })
   })
   await page.goto('/')

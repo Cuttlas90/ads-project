@@ -13,6 +13,8 @@ const mockRoleEndpoints = async (page: Page, preferredRole: 'owner' | 'advertise
         id: 1,
         telegram_user_id: 111,
         preferred_role: role,
+        ton_wallet_address: null,
+        has_wallet: false,
       }),
     })
   })

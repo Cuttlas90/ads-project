@@ -30,6 +30,17 @@ Set TON variables in `.env` for escrow funding:
 - `TON_NETWORK` defaults to `testnet` in `ENV=dev`
 The escrow watcher runs via Celery beat every 60 seconds.
 
+### Wallet proof flow
+Wallet persistence now uses TonConnect proof challenge/verify endpoints:
+- `POST /users/me/wallet/challenge` issues a one-time challenge (TTL: 5 minutes).
+- `POST /users/me/wallet/verify` verifies TonConnect proof + app domain and updates `ton_wallet_address`.
+- Legacy `PUT /users/me/wallet` is gated and no longer accepts direct wallet strings.
+
+Frontend behavior:
+- Profile contains the wallet connect/update flow.
+- Advertiser funding (`/advertiser/deals/:id/fund`) is hard-blocked if wallet is missing and shows a modal that links to Profile with `next` return path.
+- `/auth/me` now includes `ton_wallet_address` and `has_wallet` for cheap route guards.
+
 ### Telethon Bootstrap and Re-Authorization
 Channel verification uses Telethon stats calls, so a logged-in Telethon **user account session** is required.
 `TELEGRAM_BOT_TOKEN` alone is not enough for this flow.

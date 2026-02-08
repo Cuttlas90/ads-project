@@ -6,9 +6,14 @@
       </TgStatePanel>
 
       <div class="funding__body">
-        <TgButton full-width :loading="loading" @click="initFunding"
-          >Generate TONConnect request</TgButton
+        <TgButton
+          full-width
+          :loading="loading"
+          :disabled="walletMissing"
+          @click="initFunding"
         >
+          {{ walletMissing ? 'Connect wallet in Profile to continue' : 'Generate TONConnect request' }}
+        </TgButton>
         <div id="tonconnect-button" class="funding__ton" />
 
         <TgCard v-if="escrow" title="Escrow status" :padded="false">
@@ -23,18 +28,32 @@
         </TgCard>
       </div>
     </TgCard>
+
+    <TgModal :open="walletGateOpen" title="Wallet required" :close-on-backdrop="false" @close="closeWalletGate">
+      <p class="funding__modal-copy">
+        Funding is blocked until your advertiser wallet is connected. Refund flows depend on this wallet.
+      </p>
+      <template #footer>
+        <div class="funding__modal-actions">
+          <TgButton full-width @click="goToProfile">Go to Profile</TgButton>
+        </div>
+      </template>
+    </TgModal>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
 import { TonConnectUI } from '@tonconnect/ui'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
-import { TgButton, TgCard, TgStatePanel } from '../components/tg'
+import { TgButton, TgCard, TgModal, TgStatePanel } from '../components/tg'
 import { dealsService } from '../services/deals'
+import { useAuthStore } from '../stores/auth'
 
 const route = useRoute()
+const router = useRouter()
+const authStore = useAuthStore()
 const dealId = Number(route.params.id)
 
 const loading = ref(false)
@@ -42,6 +61,9 @@ const error = ref('')
 const escrow = ref<Record<string, unknown> | null>(null)
 const tonUi = ref<TonConnectUI | null>(null)
 const poller = ref<number | null>(null)
+const walletGateOpen = ref(false)
+
+const walletMissing = computed(() => !(authStore.user?.has_wallet ?? false))
 
 const initTonConnect = () => {
   if (tonUi.value) return
@@ -56,7 +78,29 @@ const initTonConnect = () => {
   })
 }
 
+const openWalletGate = () => {
+  walletGateOpen.value = true
+}
+
+const closeWalletGate = () => {
+  walletGateOpen.value = false
+}
+
+const goToProfile = async () => {
+  await router.push({
+    path: '/profile',
+    query: {
+      next: route.fullPath,
+    },
+  })
+}
+
 const initFunding = async () => {
+  if (walletMissing.value) {
+    openWalletGate()
+    return
+  }
+
   loading.value = true
   error.value = ''
   try {
@@ -88,7 +132,23 @@ const startPolling = () => {
   }, 4000)
 }
 
+watch(walletMissing, (missing) => {
+  if (missing) {
+    openWalletGate()
+    return
+  }
+
+  closeWalletGate()
+  initTonConnect()
+  void pollStatus()
+})
+
 onMounted(() => {
+  if (walletMissing.value) {
+    openWalletGate()
+    return
+  }
+
   initTonConnect()
   void pollStatus()
 })
@@ -114,5 +174,15 @@ onBeforeUnmount(() => {
 .funding__status {
   padding: 1rem;
   color: var(--app-ink-muted);
+}
+
+.funding__modal-copy {
+  margin: 0;
+  color: var(--app-ink-muted);
+}
+
+.funding__modal-actions {
+  display: flex;
+  width: 100%;
 }
 </style>

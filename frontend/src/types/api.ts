@@ -4,6 +4,45 @@ export interface AuthMeResponse {
   id: number
   telegram_user_id: number
   preferred_role: RolePreference | null
+  ton_wallet_address: string | null
+  has_wallet: boolean
+}
+
+export interface UserWalletChallengeResponse {
+  challenge: string
+  expires_at: string
+  ttl_seconds: number
+}
+
+export interface TonProofDomainInput {
+  lengthBytes: number
+  value: string
+}
+
+export interface TonProofInput {
+  timestamp: number
+  domain: TonProofDomainInput
+  signature: string
+  payload: string
+}
+
+export interface TonAccountInput {
+  address: string
+  chain?: string | null
+  walletStateInit?: string | null
+  publicKey?: string | null
+}
+
+export interface UserWalletVerifyRequest {
+  account: TonAccountInput
+  proof: TonProofInput
+}
+
+export interface UserWalletSummary {
+  id: number
+  telegram_user_id: number
+  ton_wallet_address: string | null
+  has_wallet: boolean
 }
 
 export interface DealInboxItem {

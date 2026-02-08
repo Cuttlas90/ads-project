@@ -37,7 +37,7 @@ def _auth_headers(user_id: int) -> dict[str, str]:
     return {"X-Telegram-Init-Data": init_data}
 
 
-def test_update_wallet_success() -> None:
+def test_legacy_wallet_update_endpoint_is_gated() -> None:
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -62,9 +62,8 @@ def test_update_wallet_success() -> None:
             headers=_auth_headers(123),
         )
 
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["ton_wallet_address"] == "EQ_WALLET"
+        assert response.status_code == 410
+        assert "tonconnect proof" in response.json()["detail"].lower()
 
     app.dependency_overrides.clear()
     SQLModel.metadata.drop_all(engine)

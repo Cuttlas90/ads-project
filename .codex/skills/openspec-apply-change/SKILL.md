@@ -64,6 +64,28 @@ Implement tasks from an OpenSpec change.
    - Remaining tasks overview
    - Dynamic instruction from CLI
 
+5.5 **Resolve external library documentation (Context7 MCP)**
+
+Before implementing tasks, identify any external libraries, frameworks, SDKs, or protocols required by the remaining tasks.
+
+For each identified dependency:
+- Use Context7 MCP to retrieve the **latest official documentation**
+- Prefer:
+  - Official API references
+  - Latest stable version behavior
+  - Migration or breaking-change notes if relevant
+
+Only query Context7 when:
+- The task involves non-trivial library usage
+- APIs, configuration, or lifecycle behavior matters
+- There is risk of outdated knowledge
+
+Do NOT query Context7 for:
+- Pure logic or algorithmic tasks
+- Trivial syntax already confirmed in context files
+
+Summarize retrieved documentation as **implementation constraints**, not verbatim docs.
+
 6. **Implement tasks (loop until done or blocked)**
 
    For each pending task:
@@ -78,6 +100,15 @@ Implement tasks from an OpenSpec change.
    - Implementation reveals a design issue → suggest updating artifacts
    - Error or blocker encountered → report and wait for guidance
    - User interrupts
+
+   When implementing a task that depends on an external library:
+   - First consult Context7 MCP for the relevant library
+   - Align implementation strictly with retrieved documentation
+   - If documentation conflicts with existing specs or design:
+    - Pause implementation
+    - Report the conflict
+    - Suggest updating artifacts
+
 
 7. **On completion or pause, show status**
 

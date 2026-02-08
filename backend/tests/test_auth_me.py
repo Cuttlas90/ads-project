@@ -110,6 +110,9 @@ def test_auth_me_updates_last_login(client: TestClient, db_engine) -> None:
 
     response = client.get("/auth/me", headers={"X-Telegram-Init-Data": init_data})
     assert response.status_code == 200
+    payload = response.json()
+    assert payload["ton_wallet_address"] is None
+    assert payload["has_wallet"] is False
 
     with Session(db_engine) as session:
         user = session.exec(select(User).where(User.telegram_user_id == 456)).first()
@@ -129,8 +132,39 @@ def test_auth_me_ignores_external_user_id(client: TestClient, db_engine) -> None
     )
 
     assert response.status_code == 200
-    assert response.json()["telegram_user_id"] == 789
+    payload = response.json()
+    assert payload["telegram_user_id"] == 789
+    assert payload["ton_wallet_address"] is None
+    assert payload["has_wallet"] is False
 
     with Session(db_engine) as session:
         user = session.exec(select(User).where(User.telegram_user_id == 789)).first()
         assert user is not None
+
+
+def test_auth_me_includes_wallet_fields_when_wallet_present(client: TestClient, db_engine) -> None:
+    with Session(db_engine) as session:
+        user = User(telegram_user_id=990, username="seeded", ton_wallet_address="EQ_PRESENT")
+        session.add(user)
+        session.commit()
+
+    auth_date = str(int(time.time()))
+    init_data = build_init_data({"auth_date": auth_date, "user": _user_payload(990)})
+    response = client.get("/auth/me", headers={"X-Telegram-Init-Data": init_data})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ton_wallet_address"] == "EQ_PRESENT"
+    assert payload["has_wallet"] is True
+
+
+def test_auth_me_includes_wallet_fields_when_wallet_missing(client: TestClient, db_engine) -> None:
+    _seed_user(db_engine, 991)
+    auth_date = str(int(time.time()))
+    init_data = build_init_data({"auth_date": auth_date, "user": _user_payload(991)})
+    response = client.get("/auth/me", headers={"X-Telegram-Init-Data": init_data})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ton_wallet_address"] is None
+    assert payload["has_wallet"] is False

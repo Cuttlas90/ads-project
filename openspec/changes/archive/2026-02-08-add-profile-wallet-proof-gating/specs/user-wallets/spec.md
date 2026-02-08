@@ -1,8 +1,5 @@
-# user-wallets Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by syncing change add-deal-posting-verification-payouts. Update Purpose after archive.
-## Requirements
 ### Requirement: User wallet address storage
 The system SHALL persist a `ton_wallet_address` on the user record only after successful TonConnect proof verification bound to the authenticated user. The address MUST be updateable, and each update MUST require a fresh proof. The address MUST be required before release or refund transfers are attempted.
 
@@ -32,4 +29,3 @@ The system SHALL expose an authenticated challenge/verify wallet API flow. It SH
 #### Scenario: Expired challenge is rejected
 - **WHEN** an authenticated user submits proof for a challenge older than 5 minutes
 - **THEN** the system rejects the request and does not update wallet data
-
