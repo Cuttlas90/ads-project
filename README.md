@@ -30,6 +30,25 @@ Set TON variables in `.env` for escrow funding:
 - `TON_NETWORK` defaults to `testnet` in `ENV=dev`
 The escrow watcher runs via Celery beat every 60 seconds.
 
+### Telethon Bootstrap and Re-Authorization
+Channel verification uses Telethon stats calls, so a logged-in Telethon **user account session** is required.
+`TELEGRAM_BOT_TOKEN` alone is not enough for this flow.
+
+1. Configure Telegram credentials in `.env`:
+`TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, optional MTProxy fields (`TELEGRAM_MTPROXY_HOST`, `TELEGRAM_MTPROXY_PORT`, `TELEGRAM_MTPROXY_SECRET`).
+2. Configure a durable session target (recommended):
+`TELEGRAM_SESSION_STRING_PATH=/app/.secrets/telethon_session.txt`
+3. Run bootstrap explicitly (operator-only, once per environment) to add/refresh the Telethon user session:
+```bash
+docker compose --env-file .env -f infra/docker-compose.yml exec backend uv run telethon-bootstrap
+```
+4. Re-authorize by re-running the same command; it replaces the persisted session string.
+5. If you change Telegram env values (`TELEGRAM_SESSION_STRING_PATH`, MTProxy fields, API credentials), recreate backend and run bootstrap again.
+
+Notes:
+- The bootstrap command prompts for phone, OTP, and 2FA only when needed.
+- OTP, 2FA password, and raw session string are not logged by the command.
+
 ### Frontend
 ```bash
 cd frontend

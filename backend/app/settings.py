@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     TELEGRAM_API_HASH: str | None = None
     TELEGRAM_ENABLED: bool = True
     TELEGRAM_SESSION_NAME: str = "tgads_backend"
+    TELEGRAM_SESSION_STRING: str | None = None
+    TELEGRAM_SESSION_STRING_PATH: str | None = None
     TELEGRAM_MTPROXY_HOST: str | None = None
     TELEGRAM_MTPROXY_PORT: int | None = None
     TELEGRAM_MTPROXY_SECRET: str | None = None

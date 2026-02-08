@@ -31,6 +31,9 @@ dev = [
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[project.scripts]
+telethon-bootstrap = "app.telegram.bootstrap:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]

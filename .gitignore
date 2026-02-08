@@ -34,3 +34,7 @@ Thumbs.db
 
 # Build artifacts
 build/
+backend/celerybeat-schedule
+backend/*.session
+backend/*.session-journal
+backend/.telethon_session_string

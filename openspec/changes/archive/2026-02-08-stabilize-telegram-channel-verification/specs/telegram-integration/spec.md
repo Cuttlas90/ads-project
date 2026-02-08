@@ -1,8 +1,5 @@
-# telegram-integration Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-telegram-client-wrappers. Update Purpose after archive.
-## Requirements
 ### Requirement: Telegram integration settings
 The backend and bot services SHALL define `TELEGRAM_ENABLED` (default `true`), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_SESSION_NAME` (default `"tgads_backend"`), and `TELEGRAM_MEDIA_CHANNEL_ID`. They SHALL additionally support optional MTProto proxy configuration via `TELEGRAM_MTPROXY_HOST`, `TELEGRAM_MTPROXY_PORT`, and `TELEGRAM_MTPROXY_SECRET`. MTProxy fields MUST be treated as an all-or-none group: when any MTProxy field is set, all three MUST be present and valid. Telegram service methods SHALL fail fast with a clear configuration error when `TELEGRAM_ENABLED` is false or required credentials are missing.
 
@@ -29,30 +26,7 @@ The system SHALL provide `shared/telegram/telethon_client.py` with a `TelegramCl
 - **WHEN** MTProxy settings are fully configured
 - **THEN** the Telethon wrapper initializes the client with MTProxy transport and proxy tuple settings
 
-### Requirement: Bot API wrapper
-The system SHALL provide `shared/telegram/bot_api.py` with a `BotApiService` that constructs the Bot API base URL from `TELEGRAM_BOT_TOKEN` and exposes `send_message(chat_id, text, reply_markup=None, disable_web_page_preview=True)` to call `sendMessage`. It SHALL return the parsed JSON response on success and raise a clear error on non-200 responses. It SHALL NOT implement retries, polling, or webhook handling.
-
-#### Scenario: SendMessage success
-- **WHEN** `send_message` is called with a chat_id and text
-- **THEN** it issues an HTTP POST to the Bot API `sendMessage` endpoint with the provided payload and returns the parsed JSON response
-
-#### Scenario: Bot API error
-- **WHEN** the Bot API responds with a non-200 status
-- **THEN** `send_message` raises a controlled error that includes response details
-
-### Requirement: Bot API media upload helper
-The system SHALL provide a Bot API helper that uploads `image` or `video` media to `TELEGRAM_MEDIA_CHANNEL_ID` and returns the resulting Telegram `file_id` and media type. It SHALL raise a controlled error on non-200 responses.
-
-#### Scenario: Media upload returns file id
-- **WHEN** media is uploaded to the Telegram Bot API
-- **THEN** the response includes the Telegram `file_id` for the uploaded media
-
-### Requirement: Telegram package exports
-The system SHALL expose `TelegramClientService` and `BotApiService` from `shared/telegram/__init__.py`.
-
-#### Scenario: Import convenience
-- **WHEN** a caller imports from `app.telegram`
-- **THEN** `TelegramClientService` and `BotApiService` are available for use
+## ADDED Requirements
 
 ### Requirement: Telethon authorization status helper
 The Telegram integration layer SHALL provide an explicit way for backend services to determine whether the current Telethon session is authorized before issuing stats-dependent business operations.

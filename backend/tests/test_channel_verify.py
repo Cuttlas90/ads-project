@@ -22,6 +22,7 @@ from app.models.channel_stats_snapshot import ChannelStatsSnapshot
 from app.settings import Settings
 from app.telegram.permissions import PermissionCheckResult
 from shared.db.base import SQLModel
+from shared.telegram.errors import TelegramAuthorizationError
 
 BOT_TOKEN = "test-bot-token"
 
@@ -164,6 +165,7 @@ def _patch_telegram(
     stats_response: DummyStatsResponse,
     *,
     authorized: bool = True,
+    connect_error: Exception | None = None,
 ):
     dummy_client = DummyTelethonClient(full_response, stats_response, authorized=authorized)
 
@@ -172,10 +174,21 @@ def _patch_telegram(
             self._client = dummy_client
 
         async def connect(self) -> None:
+            if connect_error is not None:
+                raise connect_error
             return None
+
+        async def require_authorized(self) -> None:
+            if not await self._client.is_user_authorized():
+                raise TelegramAuthorizationError(
+                    "Telegram client session is not authorized. Authenticate TELEGRAM_SESSION_NAME first."
+                )
 
         async def disconnect(self) -> None:
             return None
+
+        def client(self):
+            return self._client
 
         def _get_client(self):
             return self._client
@@ -296,6 +309,82 @@ def test_verify_channel_success_creates_snapshot(client: TestClient, db_engine, 
         assert snapshot.raw_stats["bot_permission_details"]["can_post_messages"] is True
 
 
+def test_verify_channel_serializes_bytes_in_raw_stats(client: TestClient, db_engine, monkeypatch) -> None:
+    async def fake_check_bot_permissions(_bot_api, _channel):
+        return PermissionCheckResult(
+            ok=True,
+            is_admin=True,
+            missing_permissions=[],
+            present_permissions=["can_edit_messages", "can_post_messages"],
+            permission_details={
+                "can_post_messages": True,
+                "can_edit_messages": True,
+                "can_manage_chat": True,
+            },
+            raw_member={
+                "status": "administrator",
+                "can_post_messages": True,
+                "can_edit_messages": True,
+            },
+        )
+
+    monkeypatch.setattr(channel_verify_service, "check_bot_permissions", fake_check_bot_permissions)
+
+    class DummyFullResponseWithBytes(DummyFullResponse):
+        def to_dict(self):
+            payload = super().to_dict()
+            payload["raw_bin"] = b"\xff\x00"
+            return payload
+
+    class DummyStatsResponseWithBytes(DummyStatsResponse):
+        def to_dict(self):
+            payload = super().to_dict()
+            payload["blob"] = b"abc"
+            return payload
+
+    full_response = DummyFullResponseWithBytes(
+        full_chat=DummyFullChat(participants_count=111, id=999),
+        chats=[DummyChat(id=999, username="UpdatedName", title="Updated Title")],
+    )
+    stats_response = DummyStatsResponseWithBytes(
+        views_per_post=DummyViewsPerPost(current=222),
+        languages_graph=DummyGraph(data={"en": 80}),
+    )
+    _patch_telegram(monkeypatch, full_response, stats_response)
+
+    created = client.post(
+        "/channels",
+        json={"username": "@examplechannel"},
+        headers=_auth_headers(123),
+    )
+    channel_id = created.json()["id"]
+
+    response = client.post(
+        f"/channels/{channel_id}/verify",
+        headers=_auth_headers(123),
+    )
+
+    assert response.status_code == 200
+
+    def has_bytes(value) -> bool:
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            return True
+        if isinstance(value, dict):
+            return any(has_bytes(v) for v in value.values())
+        if isinstance(value, (list, tuple, set)):
+            return any(has_bytes(v) for v in value)
+        return False
+
+    with Session(db_engine) as session:
+        snapshot = session.exec(
+            select(ChannelStatsSnapshot).where(ChannelStatsSnapshot.channel_id == channel_id)
+        ).one()
+        assert snapshot.raw_stats is not None
+        assert has_bytes(snapshot.raw_stats) is False
+        assert snapshot.raw_stats["full_channel"]["raw_bin"] == {"__bytes_b64__": "/wA="}
+        assert snapshot.raw_stats["statistics"]["blob"] == "abc"
+
+
 def test_verify_channel_requires_membership(client: TestClient, db_engine, monkeypatch) -> None:
     async def fake_check_bot_permissions(_bot_api, _channel):
         return PermissionCheckResult(
@@ -397,3 +486,56 @@ def test_verify_channel_unauthorized_telethon_session_returns_502(
 
     assert response.status_code == 502
     assert "not authorized" in response.json()["detail"].lower()
+
+
+def test_verify_channel_connect_failure_has_no_partial_persistence(
+    client: TestClient, db_engine, monkeypatch
+) -> None:
+    async def fake_check_bot_permissions(_bot_api, _channel):
+        return PermissionCheckResult(
+            ok=True,
+            is_admin=True,
+            missing_permissions=[],
+            present_permissions=["can_edit_messages", "can_post_messages"],
+            permission_details={"can_post_messages": True, "can_edit_messages": True},
+            raw_member={"status": "administrator"},
+        )
+
+    monkeypatch.setattr(channel_verify_service, "check_bot_permissions", fake_check_bot_permissions)
+
+    full_response = DummyFullResponse(
+        full_chat=DummyFullChat(participants_count=111, id=999),
+        chats=[DummyChat(id=999, username="UpdatedName", title="Updated Title")],
+    )
+    stats_response = DummyStatsResponse(
+        views_per_post=DummyViewsPerPost(current=222),
+        languages_graph=DummyGraph(data={"en": 80}),
+    )
+    _patch_telegram(
+        monkeypatch,
+        full_response,
+        stats_response,
+        connect_error=RuntimeError("mtproto down"),
+    )
+
+    created = client.post(
+        "/channels",
+        json={"username": "@examplechannel"},
+        headers=_auth_headers(123),
+    )
+    channel_id = created.json()["id"]
+
+    response = client.post(
+        f"/channels/{channel_id}/verify",
+        headers=_auth_headers(123),
+    )
+
+    assert response.status_code == 502
+
+    with Session(db_engine) as session:
+        channel = session.exec(select(Channel).where(Channel.id == channel_id)).one()
+        assert channel.is_verified is False
+        snapshots = session.exec(
+            select(ChannelStatsSnapshot).where(ChannelStatsSnapshot.channel_id == channel_id)
+        ).all()
+        assert len(snapshots) == 0

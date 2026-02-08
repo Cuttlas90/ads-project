@@ -4,3 +4,7 @@ class TelegramConfigError(RuntimeError):
 
 class TelegramApiError(RuntimeError):
     """Raised when a Telegram API request fails."""
+
+
+class TelegramAuthorizationError(RuntimeError):
+    """Raised when a Telegram client is connected but not authorized."""
