@@ -1,6 +1,6 @@
 <template>
   <section class="listing">
-    <TgCard title="Listing editor" subtitle="Manage formats and pricing for your channel.">
+    <TgCard title="Listing editor" subtitle="Manage structured ad formats for your channel.">
       <div class="listing__header">
         <TgBadge
           v-if="listingStore.listing"
@@ -44,10 +44,29 @@
         <TgSkeleton v-if="channelsStore.loading" height="80px" />
 
         <div v-if="listingStore.listing" class="listing__formats">
-          <TgList title="Formats" subtitle="Add labels and TON prices.">
+          <TgList
+            title="Formats"
+            subtitle="Define placement type, exclusivity, retention, and TON price."
+          >
             <TgCard v-for="format in listingStore.listing.formats" :key="format.id" :padded="false">
               <div class="listing__format">
-                <TgInput v-model="formatEdits[format.id].label" label="Label" />
+                <label class="listing__field">
+                  <span>Placement</span>
+                  <select v-model="formatEdits[format.id].placement_type" class="listing__select">
+                    <option value="post">Post</option>
+                    <option value="story">Story</option>
+                  </select>
+                </label>
+                <TgInput
+                  v-model="formatEdits[format.id].exclusive_hours"
+                  label="Exclusive hours"
+                  type="number"
+                />
+                <TgInput
+                  v-model="formatEdits[format.id].retention_hours"
+                  label="Retention hours"
+                  type="number"
+                />
                 <TgInput v-model="formatEdits[format.id].price" label="Price (TON)" type="number" />
                 <TgButton
                   size="sm"
@@ -61,9 +80,27 @@
             </TgCard>
           </TgList>
 
-          <TgCard title="Add new format" subtitle="Set a label and price for a new placement.">
+          <TgCard title="Add new format" subtitle="Create structured post/story pricing options.">
             <div class="listing__add">
-              <TgInput v-model="newFormat.label" label="Label" placeholder="Story, 24h post" />
+              <label class="listing__field">
+                <span>Placement</span>
+                <select v-model="newFormat.placement_type" class="listing__select">
+                  <option value="post">Post</option>
+                  <option value="story">Story</option>
+                </select>
+              </label>
+              <TgInput
+                v-model="newFormat.exclusive_hours"
+                label="Exclusive hours"
+                type="number"
+                placeholder="0"
+              />
+              <TgInput
+                v-model="newFormat.retention_hours"
+                label="Retention hours"
+                type="number"
+                placeholder="24"
+              />
               <TgInput
                 v-model="newFormat.price"
                 label="Price (TON)"
@@ -104,17 +141,45 @@ const listingStore = useListingsStore()
 const channelId = Number(route.params.id)
 
 const newFormat = reactive({
-  label: '',
+  placement_type: 'post' as 'post' | 'story',
+  exclusive_hours: '0',
+  retention_hours: '24',
   price: '',
 })
 
-const formatEdits = reactive<Record<number, { label: string; price: string }>>({})
+const formatEdits = reactive<
+  Record<
+    number,
+    { placement_type: 'post' | 'story'; exclusive_hours: string; retention_hours: string; price: string }
+  >
+>({})
+
+const parseNonNegativeInt = (value: string) => {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 0) return null
+  return parsed
+}
+
+const parsePositiveInt = (value: string) => {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 1) return null
+  return parsed
+}
+
+const parsePrice = (value: string) => {
+  const parsed = Number(value)
+  if (Number.isNaN(parsed) || parsed < 0) return null
+  return parsed
+}
 
 const seedFormatEdits = () => {
   if (!listingStore.listing) return
   listingStore.listing.formats.forEach((format) => {
-    if (!formatEdits[format.id]) {
-      formatEdits[format.id] = { label: format.label, price: format.price }
+    formatEdits[format.id] = {
+      placement_type: format.placement_type,
+      exclusive_hours: String(format.exclusive_hours),
+      retention_hours: String(format.retention_hours),
+      price: format.price,
     }
   })
 }
@@ -137,23 +202,42 @@ const createListing = async () => {
 }
 
 const addFormat = async () => {
-  const label = newFormat.label.trim()
-  const price = Number(newFormat.price)
-  if (!label || Number.isNaN(price)) return
-  await listingStore.addFormat(label, price)
-  newFormat.label = ''
+  const exclusiveHours = parseNonNegativeInt(newFormat.exclusive_hours)
+  const retentionHours = parsePositiveInt(newFormat.retention_hours)
+  const price = parsePrice(newFormat.price)
+  if (exclusiveHours === null || retentionHours === null || price === null) return
+
+  await listingStore.addFormat({
+    placement_type: newFormat.placement_type,
+    exclusive_hours: exclusiveHours,
+    retention_hours: retentionHours,
+    price,
+  })
+
+  newFormat.placement_type = 'post'
+  newFormat.exclusive_hours = '0'
+  newFormat.retention_hours = '24'
   newFormat.price = ''
 }
 
 const saveFormat = async (formatId: number) => {
   const edit = formatEdits[formatId]
   if (!edit) return
-  const label = edit.label.trim()
-  const price = Number(edit.price)
-  if (!label || Number.isNaN(price)) return
+
+  const exclusiveHours = parseNonNegativeInt(edit.exclusive_hours)
+  const retentionHours = parsePositiveInt(edit.retention_hours)
+  const price = parsePrice(edit.price)
+  if (exclusiveHours === null || retentionHours === null || price === null) return
+
   const format = listingStore.listing?.formats.find((item) => item.id === formatId)
   if (!format) return
-  await listingStore.updateFormat(format, { label, price })
+
+  await listingStore.updateFormat(format, {
+    placement_type: edit.placement_type,
+    exclusive_hours: exclusiveHours,
+    retention_hours: retentionHours,
+    price,
+  })
 }
 
 const toggleActive = async () => {
@@ -162,8 +246,9 @@ const toggleActive = async () => {
 }
 
 watch(
-  () => listingStore.listing?.formats.length,
+  () => listingStore.listing?.formats,
   () => seedFormatEdits(),
+  { deep: true },
 )
 
 onMounted(() => {
@@ -198,5 +283,25 @@ onMounted(() => {
 .listing__add {
   display: grid;
   gap: 0.75rem;
+}
+
+.listing__field {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+}
+
+.listing__field > span {
+  color: var(--app-ink-muted);
+  font-weight: 600;
+}
+
+.listing__select {
+  border-radius: var(--app-radius-md);
+  border: 1px solid var(--app-border);
+  padding: 0.65rem 0.85rem;
+  font-size: 0.95rem;
+  background: var(--app-surface);
+  color: var(--app-ink);
 }
 </style>

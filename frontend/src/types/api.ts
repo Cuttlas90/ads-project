@@ -1,4 +1,5 @@
 export type RolePreference = 'owner' | 'advertiser'
+export type PlacementType = 'post' | 'story'
 
 export interface AuthMeResponse {
   id: number
@@ -76,6 +77,9 @@ export interface DealDetail {
   campaign_application_id?: number | null
   price_ton: string
   ad_type: string
+  placement_type?: PlacementType | null
+  exclusive_hours?: number | null
+  retention_hours?: number | null
   creative_text: string
   creative_media_type: string
   creative_media_ref: string
@@ -121,7 +125,9 @@ export interface ChannelSummary {
 export interface ListingFormatSummary {
   id: number
   listing_id: number
-  label: string
+  placement_type: PlacementType
+  exclusive_hours: number
+  retention_hours: number
   price: string
 }
 
@@ -143,8 +149,9 @@ export interface ChannelListingResponse {
 
 export interface MarketplaceListingFormat {
   id: number
-  format_id: number
-  label: string
+  placement_type: PlacementType
+  exclusive_hours: number
+  retention_hours: number
   price: string
 }
 

@@ -162,3 +162,50 @@ def test_upload_media_returns_file_id(monkeypatch) -> None:
     assert response["file_id"] == "file-2"
     assert response["media_type"] == "image"
     assert captured["data"]["chat_id"] == 123
+
+
+def test_post_story_success(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, json: dict) -> DummyResponse:
+        captured["url"] = url
+        captured["json"] = json
+        return DummyResponse(200, {"ok": True, "result": {"id": 42}})
+
+    monkeypatch.setattr(bot_api.httpx, "post", fake_post)
+
+    settings = Settings(
+        _env_file=None,
+        TELEGRAM_ENABLED=True,
+        TELEGRAM_BOT_TOKEN="token",
+        TELEGRAM_BUSINESS_CONNECTION_ID="biz_123",
+    )
+    service = BotApiService(settings)
+
+    response = service.post_story(media_type="image", media="file-id", caption="hello")
+
+    assert response["ok"] is True
+    assert captured["url"] == "https://api.telegram.org/bottoken/postStory"
+    assert captured["json"] == {
+        "business_connection_id": "biz_123",
+        "content": {"type": "photo", "photo": "file-id"},
+        "caption": "hello",
+    }
+
+
+def test_post_story_requires_business_connection_id(monkeypatch) -> None:
+    def fake_post(*args, **kwargs) -> DummyResponse:
+        raise AssertionError("httpx.post should not be called")
+
+    monkeypatch.setattr(bot_api.httpx, "post", fake_post)
+
+    settings = Settings(
+        _env_file=None,
+        TELEGRAM_ENABLED=True,
+        TELEGRAM_BOT_TOKEN="token",
+        TELEGRAM_BUSINESS_CONNECTION_ID=None,
+    )
+    service = BotApiService(settings)
+
+    with pytest.raises(TelegramConfigError):
+        service.post_story(media_type="image", media="file-id")

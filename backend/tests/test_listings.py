@@ -94,10 +94,24 @@ def _create_listing(client: TestClient, channel_id: int, owner_id: int) -> int:
     return response.json()["id"]
 
 
-def _create_listing_format(client: TestClient, listing_id: int, owner_id: int) -> int:
+def _create_listing_format(
+    client: TestClient,
+    listing_id: int,
+    owner_id: int,
+    *,
+    placement_type: str = "post",
+    exclusive_hours: int = 1,
+    retention_hours: int = 24,
+    price: str = "10.00",
+) -> int:
     response = client.post(
         f"/listings/{listing_id}/formats",
-        json={"label": "Post", "price": "10.00"},
+        json={
+            "placement_type": placement_type,
+            "exclusive_hours": exclusive_hours,
+            "retention_hours": retention_hours,
+            "price": price,
+        },
         headers=_auth_headers(owner_id),
     )
     return response.json()["id"]
@@ -115,7 +129,7 @@ def test_create_listing_success(client: TestClient, db_engine) -> None:
     assert response.status_code == 201
     payload = response.json()
     assert payload["channel_id"] == channel_id
-    assert payload["is_active"] is True
+    assert payload["is_active"] is False
 
     with Session(db_engine) as session:
         user = session.exec(select(User).where(User.telegram_user_id == 123)).one()
@@ -177,16 +191,30 @@ def test_manager_cannot_create_listing(client: TestClient) -> None:
 def test_update_listing_toggles_active(client: TestClient) -> None:
     channel_id = _create_channel(client, owner_id=123, username="@ownerchannel")
     listing_id = _create_listing(client, channel_id, owner_id=123)
+    _create_listing_format(client, listing_id, owner_id=123)
 
     response = client.put(
         f"/listings/{listing_id}",
-        json={"is_active": False},
+        json={"is_active": True},
         headers=_auth_headers(123),
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["is_active"] is False
+    assert payload["is_active"] is True
+
+
+def test_activation_requires_at_least_one_format(client: TestClient) -> None:
+    channel_id = _create_channel(client, owner_id=123, username="@ownerchannel")
+    listing_id = _create_listing(client, channel_id, owner_id=123)
+
+    response = client.put(
+        f"/listings/{listing_id}",
+        json={"is_active": True},
+        headers=_auth_headers(123),
+    )
+
+    assert response.status_code == 400
 
 
 def test_create_format_success(client: TestClient, db_engine) -> None:
@@ -195,18 +223,27 @@ def test_create_format_success(client: TestClient, db_engine) -> None:
 
     response = client.post(
         f"/listings/{listing_id}/formats",
-        json={"label": "Post", "price": "12.50"},
+        json={
+            "placement_type": "post",
+            "exclusive_hours": 2,
+            "retention_hours": 24,
+            "price": "12.50",
+        },
         headers=_auth_headers(123),
     )
 
     assert response.status_code == 201
     payload = response.json()
-    assert payload["label"] == "Post"
+    assert payload["placement_type"] == "post"
+    assert payload["exclusive_hours"] == 2
+    assert payload["retention_hours"] == 24
     assert Decimal(payload["price"]) == Decimal("12.50")
 
     with Session(db_engine) as session:
         listing_format = session.exec(select(ListingFormat).where(ListingFormat.listing_id == listing_id)).one()
-        assert listing_format.label == "Post"
+        assert listing_format.placement_type == "post"
+        assert listing_format.exclusive_hours == 2
+        assert listing_format.retention_hours == 24
 
 
 def test_channel_listing_read_endpoint(client: TestClient, db_engine) -> None:
@@ -220,6 +257,7 @@ def test_channel_listing_read_endpoint(client: TestClient, db_engine) -> None:
     assert payload["has_listing"] is True
     assert payload["listing"]["id"] == listing_id
     assert len(payload["listing"]["formats"]) == 1
+    assert payload["listing"]["formats"][0]["placement_type"] == "post"
 
 
 def test_channel_listing_read_returns_has_listing_false(client: TestClient) -> None:
@@ -231,19 +269,29 @@ def test_channel_listing_read_returns_has_listing_false(client: TestClient) -> N
     assert payload["has_listing"] is False
 
 
-def test_create_format_duplicate_label_conflict(client: TestClient) -> None:
+def test_create_format_duplicate_terms_conflict(client: TestClient) -> None:
     channel_id = _create_channel(client, owner_id=123, username="@ownerchannel")
     listing_id = _create_listing(client, channel_id, owner_id=123)
 
     client.post(
         f"/listings/{listing_id}/formats",
-        json={"label": "Post", "price": "12.50"},
+        json={
+            "placement_type": "post",
+            "exclusive_hours": 2,
+            "retention_hours": 24,
+            "price": "12.50",
+        },
         headers=_auth_headers(123),
     )
 
     response = client.post(
         f"/listings/{listing_id}/formats",
-        json={"label": "Post", "price": "20.00"},
+        json={
+            "placement_type": "post",
+            "exclusive_hours": 2,
+            "retention_hours": 24,
+            "price": "20.00",
+        },
         headers=_auth_headers(123),
     )
 
@@ -256,20 +304,27 @@ def test_update_format_success(client: TestClient) -> None:
 
     create_response = client.post(
         f"/listings/{listing_id}/formats",
-        json={"label": "Post", "price": "12.50"},
+        json={
+            "placement_type": "post",
+            "exclusive_hours": 1,
+            "retention_hours": 24,
+            "price": "12.50",
+        },
         headers=_auth_headers(123),
     )
     format_id = create_response.json()["id"]
 
     response = client.put(
         f"/listings/{listing_id}/formats/{format_id}",
-        json={"label": "Premium", "price": "30.00"},
+        json={"placement_type": "story", "exclusive_hours": 3, "retention_hours": 36, "price": "30.00"},
         headers=_auth_headers(123),
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["label"] == "Premium"
+    assert payload["placement_type"] == "story"
+    assert payload["exclusive_hours"] == 3
+    assert payload["retention_hours"] == 36
     assert Decimal(payload["price"]) == Decimal("30.00")
 
 
@@ -279,7 +334,12 @@ def test_update_format_no_fields_returns_bad_request(client: TestClient) -> None
 
     create_response = client.post(
         f"/listings/{listing_id}/formats",
-        json={"label": "Post", "price": "12.50"},
+        json={
+            "placement_type": "post",
+            "exclusive_hours": 1,
+            "retention_hours": 24,
+            "price": "12.50",
+        },
         headers=_auth_headers(123),
     )
     format_id = create_response.json()["id"]
@@ -299,7 +359,12 @@ def test_non_owner_cannot_update_format(client: TestClient) -> None:
 
     create_response = client.post(
         f"/listings/{listing_id}/formats",
-        json={"label": "Post", "price": "12.50"},
+        json={
+            "placement_type": "post",
+            "exclusive_hours": 1,
+            "retention_hours": 24,
+            "price": "12.50",
+        },
         headers=_auth_headers(123),
     )
     format_id = create_response.json()["id"]

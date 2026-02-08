@@ -85,7 +85,7 @@ def _seed_listing(
     avg_views: int | None,
     language_stats: dict | None,
     premium_stats: dict | None,
-    formats: list[tuple[str, str]],
+    formats: list[tuple[str, int, int, str]],
     created_at: datetime,
 ) -> Listing:
     user = User(telegram_user_id=telegram_user_id, username="user")
@@ -110,8 +110,16 @@ def _seed_listing(
     session.add(listing)
     session.flush()
 
-    for label, price in formats:
-        session.add(ListingFormat(listing_id=listing.id, label=label, price=Decimal(price)))
+    for placement_type, exclusive_hours, retention_hours, price in formats:
+        session.add(
+            ListingFormat(
+                listing_id=listing.id,
+                placement_type=placement_type,
+                exclusive_hours=exclusive_hours,
+                retention_hours=retention_hours,
+                price=Decimal(price),
+            )
+        )
 
     session.add(
         ChannelStatsSnapshot(
@@ -141,7 +149,7 @@ def test_marketplace_excludes_unverified_or_inactive(client: TestClient, db_engi
             avg_views=50,
             language_stats={"en": 0.8},
             premium_stats={"premium_ratio": 0.2},
-            formats=[("Post", "10.00")],
+            formats=[("post", 1, 24, "10.00")],
             created_at=created_at,
         )
         _seed_listing(
@@ -155,7 +163,7 @@ def test_marketplace_excludes_unverified_or_inactive(client: TestClient, db_engi
             avg_views=100,
             language_stats={"en": 0.9},
             premium_stats={"premium_ratio": 0.2},
-            formats=[("Post", "20.00")],
+            formats=[("post", 1, 24, "20.00")],
             created_at=created_at,
         )
         _seed_listing(
@@ -169,7 +177,7 @@ def test_marketplace_excludes_unverified_or_inactive(client: TestClient, db_engi
             avg_views=150,
             language_stats={"en": 0.9},
             premium_stats={"premium_ratio": 0.2},
-            formats=[("Post", "30.00")],
+            formats=[("post", 1, 24, "30.00")],
             created_at=created_at,
         )
 
@@ -195,7 +203,7 @@ def test_marketplace_filters_and_search(client: TestClient, db_engine) -> None:
             avg_views=200,
             language_stats={"en": 0.8},
             premium_stats={"premium_ratio": 0.3},
-            formats=[("Post", "10.00"), ("Story", "100.00")],
+            formats=[("post", 2, 24, "10.00"), ("story", 0, 24, "100.00")],
             created_at=created_at,
         )
         _seed_listing(
@@ -209,12 +217,12 @@ def test_marketplace_filters_and_search(client: TestClient, db_engine) -> None:
             avg_views=800,
             language_stats={"fa": 0.2},
             premium_stats={"premium_ratio": 0.05},
-            formats=[("Post", "50.00")],
+            formats=[("post", 1, 12, "50.00")],
             created_at=created_at,
         )
 
     response = client.get(
-        "/marketplace/listings?min_price=5&max_price=20&min_subscribers=500&search=alpha",
+        "/marketplace/listings?min_price=5&max_price=20&placement_type=post&min_exclusive_hours=2&min_subscribers=500&search=alpha",
         headers=_auth_headers(123),
     )
 
@@ -222,7 +230,7 @@ def test_marketplace_filters_and_search(client: TestClient, db_engine) -> None:
     payload = response.json()
     assert len(payload["items"]) == 1
     assert payload["items"][0]["channel_username"] == "alpha"
-    assert payload["items"][0]["formats"][0]["format_id"] == payload["items"][0]["formats"][0]["id"]
+    assert payload["items"][0]["formats"][0]["placement_type"] in {"post", "story"}
 
 
 def test_marketplace_sort_by_price(client: TestClient, db_engine) -> None:
@@ -239,7 +247,7 @@ def test_marketplace_sort_by_price(client: TestClient, db_engine) -> None:
             avg_views=50,
             language_stats={"en": 0.8},
             premium_stats={"premium_ratio": 0.2},
-            formats=[("Post", "5.00"), ("Story", "25.00")],
+            formats=[("post", 1, 24, "5.00"), ("story", 0, 24, "25.00")],
             created_at=created_at,
         )
         _seed_listing(
@@ -253,7 +261,7 @@ def test_marketplace_sort_by_price(client: TestClient, db_engine) -> None:
             avg_views=100,
             language_stats={"en": 0.8},
             premium_stats={"premium_ratio": 0.2},
-            formats=[("Post", "50.00")],
+            formats=[("post", 1, 24, "50.00")],
             created_at=created_at,
         )
 
@@ -267,7 +275,9 @@ def test_marketplace_sort_by_price(client: TestClient, db_engine) -> None:
 
 def test_marketplace_invalid_params_return_400(client: TestClient) -> None:
     response = client.get("/marketplace/listings?min_price=not-a-number")
+    assert response.status_code == 400
 
+    response = client.get("/marketplace/listings?placement_type=invalid")
     assert response.status_code == 400
 
 
@@ -285,7 +295,7 @@ def test_marketplace_premium_filter_excludes_missing_stats(client: TestClient, d
             avg_views=50,
             language_stats={"en": 0.8},
             premium_stats={"premium_ratio": 0.2},
-            formats=[("Post", "5.00")],
+            formats=[("post", 1, 24, "5.00")],
             created_at=created_at,
         )
         _seed_listing(
@@ -299,7 +309,7 @@ def test_marketplace_premium_filter_excludes_missing_stats(client: TestClient, d
             avg_views=50,
             language_stats={"en": 0.8},
             premium_stats=None,
-            formats=[("Post", "5.00")],
+            formats=[("post", 1, 24, "5.00")],
             created_at=created_at,
         )
 

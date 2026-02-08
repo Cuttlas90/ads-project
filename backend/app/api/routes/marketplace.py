@@ -19,6 +19,7 @@ router = APIRouter(prefix="/marketplace", tags=["marketplace"])
 DEFAULT_PAGE = 1
 DEFAULT_PAGE_SIZE = 20
 ALLOWED_SORTS = {"price", "subscribers"}
+ALLOWED_PLACEMENT_TYPES = {"post", "story"}
 
 
 def _parse_int(value: str | None, *, field: str, minimum: int | None = None) -> int | None:
@@ -73,6 +74,11 @@ def list_marketplace_listings(
 
     min_price = _parse_decimal(params.get("min_price"), field="min_price", minimum=Decimal("0"))
     max_price = _parse_decimal(params.get("max_price"), field="max_price", minimum=Decimal("0"))
+    placement_type = params.get("placement_type")
+    min_exclusive_hours = _parse_int(params.get("min_exclusive_hours"), field="min_exclusive_hours", minimum=0)
+    max_exclusive_hours = _parse_int(params.get("max_exclusive_hours"), field="max_exclusive_hours", minimum=0)
+    min_retention_hours = _parse_int(params.get("min_retention_hours"), field="min_retention_hours", minimum=1)
+    max_retention_hours = _parse_int(params.get("max_retention_hours"), field="max_retention_hours", minimum=1)
     min_subscribers = _parse_int(params.get("min_subscribers"), field="min_subscribers", minimum=0)
     max_subscribers = _parse_int(params.get("max_subscribers"), field="max_subscribers", minimum=0)
     min_avg_views = _parse_int(params.get("min_avg_views"), field="min_avg_views", minimum=0)
@@ -88,10 +94,15 @@ def list_marketplace_listings(
     if sort is not None and sort not in ALLOWED_SORTS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid sort")
 
+    if placement_type is not None and placement_type not in ALLOWED_PLACEMENT_TYPES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid placement_type")
+
     if min_premium_pct is not None and min_premium_pct > 1.0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid min_premium_pct")
 
     _validate_range(min_price, max_price, field="price")
+    _validate_range(min_exclusive_hours, max_exclusive_hours, field="exclusive_hours")
+    _validate_range(min_retention_hours, max_retention_hours, field="retention_hours")
     _validate_range(min_subscribers, max_subscribers, field="subscribers")
     _validate_range(min_avg_views, max_avg_views, field="avg_views")
 
@@ -99,6 +110,11 @@ def list_marketplace_listings(
         db,
         min_price=min_price,
         max_price=max_price,
+        placement_type=placement_type,
+        min_exclusive_hours=min_exclusive_hours,
+        max_exclusive_hours=max_exclusive_hours,
+        min_retention_hours=min_retention_hours,
+        max_retention_hours=max_retention_hours,
         min_subscribers=min_subscribers,
         max_subscribers=max_subscribers,
         min_avg_views=min_avg_views,
@@ -119,8 +135,9 @@ def list_marketplace_listings(
             formats=[
                 MarketplaceListingFormat(
                     id=format_item.id,
-                    format_id=format_item.id,
-                    label=format_item.label,
+                    placement_type=format_item.placement_type,
+                    exclusive_hours=format_item.exclusive_hours,
+                    retention_hours=format_item.retention_hours,
                     price=format_item.price,
                 )
                 for format_item in item.formats

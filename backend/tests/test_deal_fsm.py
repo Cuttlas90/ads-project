@@ -44,7 +44,13 @@ def _seed_listing_deal(session: Session) -> Deal:
     session.add(listing)
     session.flush()
 
-    listing_format = ListingFormat(listing_id=listing.id, label="Post", price=Decimal("10.00"))
+    listing_format = ListingFormat(
+        listing_id=listing.id,
+        placement_type="post",
+        exclusive_hours=1,
+        retention_hours=24,
+        price=Decimal("10.00"),
+    )
     session.add(listing_format)
     session.flush()
 
@@ -56,7 +62,10 @@ def _seed_listing_deal(session: Session) -> Deal:
         listing_id=listing.id,
         listing_format_id=listing_format.id,
         price_ton=Decimal("10.00"),
-        ad_type=listing_format.label,
+        ad_type=listing_format.placement_type,
+        placement_type=listing_format.placement_type,
+        exclusive_hours=listing_format.exclusive_hours,
+        retention_hours=listing_format.retention_hours,
         creative_text="Hello",
         creative_media_type="image",
         creative_media_ref="ref",

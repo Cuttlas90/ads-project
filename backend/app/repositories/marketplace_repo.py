@@ -19,7 +19,9 @@ PREMIUM_RATIO_KEY = "premium_ratio"
 @dataclass(frozen=True)
 class MarketplaceListingFormatResult:
     id: int
-    label: str
+    placement_type: str
+    exclusive_hours: int
+    retention_hours: int
     price: Decimal
 
 
@@ -45,6 +47,11 @@ def fetch_marketplace_listings(
     *,
     min_price: Decimal | None,
     max_price: Decimal | None,
+    placement_type: str | None,
+    min_exclusive_hours: int | None,
+    max_exclusive_hours: int | None,
+    min_retention_hours: int | None,
+    max_retention_hours: int | None,
     min_subscribers: int | None,
     max_subscribers: int | None,
     min_avg_views: int | None,
@@ -84,6 +91,13 @@ def fetch_marketplace_listings(
         .join(min_price_subq, min_price_subq.c.listing_id == Listing.id, isouter=True)
         .where(Listing.is_active.is_(True))
         .where(Channel.is_verified.is_(True))
+        .where(
+            exists(
+                select(1)
+                .select_from(ListingFormat)
+                .where(ListingFormat.listing_id == Listing.id)
+            )
+        )
     )
 
     stmt = _apply_filters(
@@ -91,6 +105,11 @@ def fetch_marketplace_listings(
         snapshot_subq=snapshot_subq,
         min_price=min_price,
         max_price=max_price,
+        placement_type=placement_type,
+        min_exclusive_hours=min_exclusive_hours,
+        max_exclusive_hours=max_exclusive_hours,
+        min_retention_hours=min_retention_hours,
+        max_retention_hours=max_retention_hours,
         min_subscribers=min_subscribers,
         max_subscribers=max_subscribers,
         min_avg_views=min_avg_views,
@@ -169,6 +188,11 @@ def _apply_filters(
     snapshot_subq,
     min_price: Decimal | None,
     max_price: Decimal | None,
+    placement_type: str | None,
+    min_exclusive_hours: int | None,
+    max_exclusive_hours: int | None,
+    min_retention_hours: int | None,
+    max_retention_hours: int | None,
     min_subscribers: int | None,
     max_subscribers: int | None,
     min_avg_views: int | None,
@@ -177,13 +201,31 @@ def _apply_filters(
     min_premium_pct: float | None,
     search: str | None,
 ):
-    if min_price is not None or max_price is not None:
-        price_conditions = [ListingFormat.listing_id == Listing.id]
+    if (
+        min_price is not None
+        or max_price is not None
+        or placement_type is not None
+        or min_exclusive_hours is not None
+        or max_exclusive_hours is not None
+        or min_retention_hours is not None
+        or max_retention_hours is not None
+    ):
+        format_conditions = [ListingFormat.listing_id == Listing.id]
         if min_price is not None:
-            price_conditions.append(ListingFormat.price >= min_price)
+            format_conditions.append(ListingFormat.price >= min_price)
         if max_price is not None:
-            price_conditions.append(ListingFormat.price <= max_price)
-        stmt = stmt.where(exists(select(1).select_from(ListingFormat).where(*price_conditions)))
+            format_conditions.append(ListingFormat.price <= max_price)
+        if placement_type is not None:
+            format_conditions.append(ListingFormat.placement_type == placement_type)
+        if min_exclusive_hours is not None:
+            format_conditions.append(ListingFormat.exclusive_hours >= min_exclusive_hours)
+        if max_exclusive_hours is not None:
+            format_conditions.append(ListingFormat.exclusive_hours <= max_exclusive_hours)
+        if min_retention_hours is not None:
+            format_conditions.append(ListingFormat.retention_hours >= min_retention_hours)
+        if max_retention_hours is not None:
+            format_conditions.append(ListingFormat.retention_hours <= max_retention_hours)
+        stmt = stmt.where(exists(select(1).select_from(ListingFormat).where(and_(*format_conditions))))
 
     if min_subscribers is not None:
         stmt = stmt.where(snapshot_subq.c.subscribers >= min_subscribers)
@@ -248,11 +290,19 @@ def _load_formats(
         select(
             ListingFormat.listing_id,
             ListingFormat.id,
-            ListingFormat.label,
+            ListingFormat.placement_type,
+            ListingFormat.exclusive_hours,
+            ListingFormat.retention_hours,
             ListingFormat.price,
         )
         .where(ListingFormat.listing_id.in_(listing_ids))
-        .order_by(ListingFormat.price.asc(), ListingFormat.id.asc())
+        .order_by(
+            ListingFormat.placement_type.asc(),
+            ListingFormat.exclusive_hours.asc(),
+            ListingFormat.retention_hours.asc(),
+            ListingFormat.price.asc(),
+            ListingFormat.id.asc(),
+        )
     ).all()
 
     formats_by_listing: dict[int, list[MarketplaceListingFormatResult]] = {}
@@ -260,7 +310,9 @@ def _load_formats(
         formats_by_listing.setdefault(format_row.listing_id, []).append(
             MarketplaceListingFormatResult(
                 id=format_row.id,
-                label=format_row.label,
+                placement_type=format_row.placement_type,
+                exclusive_hours=format_row.exclusive_hours,
+                retention_hours=format_row.retention_hours,
                 price=format_row.price,
             )
         )

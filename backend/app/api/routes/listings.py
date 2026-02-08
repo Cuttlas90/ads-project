@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.api.deps import get_current_user, get_db
@@ -106,14 +107,33 @@ def _deal_summary(deal: Deal) -> DealSummary:
         campaign_application_id=deal.campaign_application_id,
         price_ton=deal.price_ton,
         ad_type=deal.ad_type,
+        placement_type=deal.placement_type,
+        exclusive_hours=deal.exclusive_hours,
+        retention_hours=deal.retention_hours,
         creative_text=deal.creative_text,
         creative_media_type=deal.creative_media_type,
         creative_media_ref=deal.creative_media_ref,
         posting_params=deal.posting_params,
+        scheduled_at=deal.scheduled_at,
+        verification_window_hours=deal.verification_window_hours,
+        posted_at=deal.posted_at,
+        posted_message_id=deal.posted_message_id,
+        posted_content_hash=deal.posted_content_hash,
+        verified_at=deal.verified_at,
         state=deal.state,
         created_at=deal.created_at,
         updated_at=deal.updated_at,
     )
+
+
+def _listing_has_formats(db: Session, listing_id: int) -> bool:
+    count = db.exec(
+        select(func.count())
+        .select_from(ListingFormat)
+        .where(ListingFormat.listing_id == listing_id)
+    ).one()
+    total = count if isinstance(count, int) else count[0]
+    return total > 0
 
 
 @router.post("", response_model=ListingSummary, status_code=status.HTTP_201_CREATED)
@@ -125,7 +145,7 @@ def create_listing(
     channel = _load_channel(db, payload.channel_id)
     _require_owner_membership(db, channel_id=channel.id, user_id=current_user.id)
 
-    listing = Listing(channel_id=channel.id, owner_id=current_user.id, is_active=True)
+    listing = Listing(channel_id=channel.id, owner_id=current_user.id, is_active=False)
     db.add(listing)
 
     try:
@@ -156,6 +176,12 @@ def update_listing(
     listing = _load_listing(db, listing_id)
     _require_listing_owner(listing, current_user.id)
 
+    if payload.is_active and not _listing_has_formats(db, listing.id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Listing must have at least one format before activation",
+        )
+
     listing.is_active = payload.is_active
     db.add(listing)
     db.commit()
@@ -181,7 +207,9 @@ def create_listing_format(
 
     listing_format = ListingFormat(
         listing_id=listing.id,
-        label=payload.label,
+        placement_type=payload.placement_type,
+        exclusive_hours=payload.exclusive_hours,
+        retention_hours=payload.retention_hours,
         price=payload.price,
     )
     db.add(listing_format)
@@ -190,13 +218,15 @@ def create_listing_format(
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Format label already exists")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Format terms already exist")
 
     db.refresh(listing_format)
     return ListingFormatSummary(
         id=listing_format.id,
         listing_id=listing_format.listing_id,
-        label=listing_format.label,
+        placement_type=listing_format.placement_type,
+        exclusive_hours=listing_format.exclusive_hours,
+        retention_hours=listing_format.retention_hours,
         price=listing_format.price,
     )
 
@@ -216,11 +246,20 @@ def update_listing_format(
     if listing_format.listing_id != listing.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Format not found")
 
-    if payload.label is None and payload.price is None:
+    if (
+        payload.placement_type is None
+        and payload.exclusive_hours is None
+        and payload.retention_hours is None
+        and payload.price is None
+    ):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update")
 
-    if payload.label is not None:
-        listing_format.label = payload.label
+    if payload.placement_type is not None:
+        listing_format.placement_type = payload.placement_type
+    if payload.exclusive_hours is not None:
+        listing_format.exclusive_hours = payload.exclusive_hours
+    if payload.retention_hours is not None:
+        listing_format.retention_hours = payload.retention_hours
     if payload.price is not None:
         listing_format.price = payload.price
 
@@ -229,13 +268,15 @@ def update_listing_format(
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Format label already exists")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Format terms already exist")
 
     db.refresh(listing_format)
     return ListingFormatSummary(
         id=listing_format.id,
         listing_id=listing_format.listing_id,
-        label=listing_format.label,
+        placement_type=listing_format.placement_type,
+        exclusive_hours=listing_format.exclusive_hours,
+        retention_hours=listing_format.retention_hours,
         price=listing_format.price,
     )
 
@@ -267,11 +308,15 @@ def create_deal_from_listing(
         listing_id=listing.id,
         listing_format_id=listing_format.id,
         price_ton=listing_format.price,
-        ad_type=listing_format.label,
+        ad_type=listing_format.placement_type,
+        placement_type=listing_format.placement_type,
+        exclusive_hours=listing_format.exclusive_hours,
+        retention_hours=listing_format.retention_hours,
         creative_text=creative_text,
         creative_media_type=creative_media_type,
         creative_media_ref=creative_media_ref,
         posting_params=payload.posting_params,
+        verification_window_hours=listing_format.retention_hours,
     )
     db.add(deal)
     db.flush()
@@ -282,7 +327,10 @@ def create_deal_from_listing(
         event_type="proposal",
         payload={
             "price_ton": str(listing_format.price),
-            "ad_type": listing_format.label,
+            "ad_type": listing_format.placement_type,
+            "placement_type": listing_format.placement_type,
+            "exclusive_hours": listing_format.exclusive_hours,
+            "retention_hours": listing_format.retention_hours,
             "creative_text": creative_text,
             "creative_media_type": creative_media_type,
             "creative_media_ref": creative_media_ref,

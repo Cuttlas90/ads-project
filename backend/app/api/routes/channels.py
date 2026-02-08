@@ -151,7 +151,13 @@ def read_channel_listing(
     formats = db.exec(
         select(ListingFormat)
         .where(ListingFormat.listing_id == listing.id)
-        .order_by(ListingFormat.price.asc(), ListingFormat.id.asc())
+        .order_by(
+            ListingFormat.placement_type.asc(),
+            ListingFormat.exclusive_hours.asc(),
+            ListingFormat.retention_hours.asc(),
+            ListingFormat.price.asc(),
+            ListingFormat.id.asc(),
+        )
     ).all()
 
     return ChannelListingResponse(
@@ -165,7 +171,9 @@ def read_channel_listing(
                 ListingFormatSummary(
                     id=format_row.id,
                     listing_id=format_row.listing_id,
-                    label=format_row.label,
+                    placement_type=format_row.placement_type,
+                    exclusive_hours=format_row.exclusive_hours,
+                    retention_hours=format_row.retention_hours,
                     price=format_row.price,
                 )
                 for format_row in formats

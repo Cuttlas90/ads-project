@@ -59,6 +59,9 @@ def _deal_summary(deal: Deal) -> DealSummary:
         campaign_application_id=deal.campaign_application_id,
         price_ton=deal.price_ton,
         ad_type=deal.ad_type,
+        placement_type=deal.placement_type,
+        exclusive_hours=deal.exclusive_hours,
+        retention_hours=deal.retention_hours,
         creative_text=deal.creative_text,
         creative_media_type=deal.creative_media_type,
         creative_media_ref=deal.creative_media_ref,
@@ -277,6 +280,9 @@ def read_deal(
         campaign_application_id=deal.campaign_application_id,
         price_ton=deal.price_ton,
         ad_type=deal.ad_type,
+        placement_type=deal.placement_type,
+        exclusive_hours=deal.exclusive_hours,
+        retention_hours=deal.retention_hours,
         creative_text=deal.creative_text,
         creative_media_type=deal.creative_media_type,
         creative_media_ref=deal.creative_media_ref,
@@ -408,6 +414,12 @@ def update_deal(
         updates["price_ton"] = _validate_price(payload.price_ton)
     if payload.ad_type is not None:
         updates["ad_type"] = _require_non_empty(payload.ad_type, field="ad_type")
+    if payload.placement_type is not None:
+        updates["placement_type"] = payload.placement_type
+    if payload.exclusive_hours is not None:
+        updates["exclusive_hours"] = payload.exclusive_hours
+    if payload.retention_hours is not None:
+        updates["retention_hours"] = payload.retention_hours
     if payload.creative_text is not None:
         updates["creative_text"] = _require_non_empty(payload.creative_text, field="creative_text")
     if payload.creative_media_type is not None:
@@ -419,6 +431,9 @@ def update_deal(
 
     if not updates:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update")
+
+    if {"placement_type", "exclusive_hours", "retention_hours"}.intersection(updates.keys()):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Placement terms are locked")
 
     if deal.source_type == DealSourceType.LISTING.value:
         if "price_ton" in updates or "ad_type" in updates:

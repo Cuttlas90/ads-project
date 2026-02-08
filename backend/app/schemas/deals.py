@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DealCreateFromListing(BaseModel):
@@ -26,6 +27,9 @@ class DealCreateFromCampaignAccept(BaseModel):
 class DealUpdate(BaseModel):
     price_ton: Decimal | None = None
     ad_type: str | None = None
+    placement_type: Literal["post", "story"] | None = None
+    exclusive_hours: int | None = Field(default=None, ge=0)
+    retention_hours: int | None = Field(default=None, ge=1)
     creative_text: str | None = None
     creative_media_type: str | None = None
     creative_media_ref: str | None = None
@@ -44,6 +48,9 @@ class DealSummary(BaseModel):
     campaign_application_id: int | None
     price_ton: Decimal
     ad_type: str
+    placement_type: Literal["post", "story"] | None = None
+    exclusive_hours: int | None = None
+    retention_hours: int | None = None
     creative_text: str
     creative_media_type: str
     creative_media_ref: str

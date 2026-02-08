@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ListingCreate(BaseModel):
@@ -21,19 +22,25 @@ class ListingSummary(BaseModel):
 
 
 class ListingFormatCreate(BaseModel):
-    label: str
-    price: Decimal
+    placement_type: Literal["post", "story"]
+    exclusive_hours: int = Field(ge=0)
+    retention_hours: int = Field(ge=1)
+    price: Decimal = Field(ge=0)
 
 
 class ListingFormatUpdate(BaseModel):
-    label: str | None = None
-    price: Decimal | None = None
+    placement_type: Literal["post", "story"] | None = None
+    exclusive_hours: int | None = Field(default=None, ge=0)
+    retention_hours: int | None = Field(default=None, ge=1)
+    price: Decimal | None = Field(default=None, ge=0)
 
 
 class ListingFormatSummary(BaseModel):
     id: int
     listing_id: int
-    label: str
+    placement_type: Literal["post", "story"]
+    exclusive_hours: int
+    retention_hours: int
     price: Decimal
 
 

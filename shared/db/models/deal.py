@@ -41,6 +41,11 @@ class DealSourceType(str, Enum):
     CAMPAIGN = "campaign"
 
 
+class DealPlacementType(str, Enum):
+    POST = "post"
+    STORY = "story"
+
+
 class Deal(SQLModel, table=True):
     __tablename__ = "deals"
     __table_args__ = (
@@ -52,6 +57,25 @@ class Deal(SQLModel, table=True):
             "(source_type = 'campaign' AND campaign_id IS NOT NULL AND campaign_application_id IS NOT NULL "
             "AND listing_id IS NULL AND listing_format_id IS NULL)",
             name="ck_deals_source",
+        ),
+        CheckConstraint(
+            "placement_type IS NULL OR placement_type IN ('post', 'story')",
+            name="ck_deals_placement_type",
+        ),
+        CheckConstraint(
+            "exclusive_hours IS NULL OR exclusive_hours >= 0",
+            name="ck_deals_exclusive_hours",
+        ),
+        CheckConstraint(
+            "retention_hours IS NULL OR retention_hours >= 1",
+            name="ck_deals_retention_hours",
+        ),
+        CheckConstraint(
+            "(source_type = 'listing' AND placement_type IS NOT NULL "
+            "AND exclusive_hours IS NOT NULL AND retention_hours IS NOT NULL) OR "
+            "(source_type = 'campaign' AND placement_type IS NULL "
+            "AND exclusive_hours IS NULL AND retention_hours IS NULL)",
+            name="ck_deals_listing_terms",
         ),
     )
 
@@ -84,6 +108,18 @@ class Deal(SQLModel, table=True):
     )
     price_ton: Decimal = Field(sa_column=Column(Numeric(18, 2), nullable=False))
     ad_type: str = Field(sa_column=Column(String, nullable=False))
+    placement_type: str | None = Field(
+        default=None,
+        sa_column=Column(String, nullable=True),
+    )
+    exclusive_hours: int | None = Field(
+        default=None,
+        sa_column=Column(Integer, nullable=True),
+    )
+    retention_hours: int | None = Field(
+        default=None,
+        sa_column=Column(Integer, nullable=True),
+    )
     creative_text: str = Field(sa_column=Column(Text, nullable=False))
     creative_media_type: str = Field(sa_column=Column(String, nullable=False))
     creative_media_ref: str = Field(sa_column=Column(String, nullable=False))

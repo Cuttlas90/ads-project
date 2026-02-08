@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     TELEGRAM_MTPROXY_PORT: int | None = None
     TELEGRAM_MTPROXY_SECRET: str | None = None
     TELEGRAM_MEDIA_CHANNEL_ID: int | None = None
+    TELEGRAM_BUSINESS_CONNECTION_ID: str | None = None
     TON_ENABLED: bool = True
     TON_NETWORK: str | None = None
     TON_CONFIRMATIONS_REQUIRED: int = 3

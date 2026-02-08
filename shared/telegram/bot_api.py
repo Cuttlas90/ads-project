@@ -18,6 +18,12 @@ class BotApiService:
     def _base_url(self) -> str:
         return f"https://api.telegram.org/bot{self._settings.TELEGRAM_BOT_TOKEN}"
 
+    def _require_story_capability(self) -> str:
+        business_connection_id = getattr(self._settings, "TELEGRAM_BUSINESS_CONNECTION_ID", None)
+        if not business_connection_id:
+            raise TelegramConfigError("TELEGRAM_BUSINESS_CONNECTION_ID is not configured")
+        return str(business_connection_id)
+
     def _post(self, method: str, payload: dict[str, object]) -> dict:
         self._require_enabled()
         response = httpx.post(f"{self._base_url()}/{method}", json=payload)
@@ -93,6 +99,29 @@ class BotApiService:
         if caption is not None:
             payload["caption"] = caption
         return self._post("sendVideo", payload)
+
+    def post_story(
+        self,
+        *,
+        media_type: str,
+        media: str,
+        caption: str | None = None,
+    ) -> dict:
+        business_connection_id = self._require_story_capability()
+        if media_type == "image":
+            content: dict[str, object] = {"type": "photo", "photo": media}
+        elif media_type == "video":
+            content = {"type": "video", "video": media}
+        else:
+            raise TelegramApiError("Unsupported story media type")
+
+        payload: dict[str, object] = {
+            "business_connection_id": business_connection_id,
+            "content": content,
+        }
+        if caption is not None:
+            payload["caption"] = caption
+        return self._post("postStory", payload)
 
     def upload_media(
         self,

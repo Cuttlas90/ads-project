@@ -105,7 +105,12 @@ def _create_listing(client: TestClient, channel_id: int, owner_id: int) -> int:
 def _create_listing_format(client: TestClient, listing_id: int, owner_id: int) -> int:
     response = client.post(
         f"/listings/{listing_id}/formats",
-        json={"label": "Post", "price": "10.00"},
+        json={
+            "placement_type": "post",
+            "exclusive_hours": 1,
+            "retention_hours": 24,
+            "price": "10.00",
+        },
         headers=_auth_headers(owner_id),
     )
     assert response.status_code == 201
@@ -136,6 +141,12 @@ def _create_listing_deal(client: TestClient, advertiser_id: int, owner_id: int) 
     channel_id = _create_channel(client, owner_id=owner_id, username=f"@chan{owner_id}_{_CHANNEL_SEQ}")
     listing_id = _create_listing(client, channel_id=channel_id, owner_id=owner_id)
     format_id = _create_listing_format(client, listing_id=listing_id, owner_id=owner_id)
+    activate_response = client.put(
+        f"/listings/{listing_id}",
+        json={"is_active": True},
+        headers=_auth_headers(owner_id),
+    )
+    assert activate_response.status_code == 200
 
     response = client.post(
         f"/listings/{listing_id}/deals",
@@ -160,7 +171,11 @@ def test_create_deal_from_listing(client: TestClient, db_engine) -> None:
         assert deal.source_type == DealSourceType.LISTING.value
         assert deal.state == DealState.DRAFT.value
         assert deal.price_ton == Decimal("10.00")
-        assert deal.ad_type == "Post"
+        assert deal.ad_type == "post"
+        assert deal.placement_type == "post"
+        assert deal.exclusive_hours == 1
+        assert deal.retention_hours == 24
+        assert deal.verification_window_hours == 24
 
         event = session.exec(select(DealEvent).where(DealEvent.deal_id == deal_id)).one()
         assert event.event_type == "proposal"
@@ -184,6 +199,17 @@ def test_listing_deal_price_locked(client: TestClient) -> None:
     response = client.patch(
         f"/deals/{deal_id}",
         json={"price_ton": "12.00"},
+        headers=_auth_headers(101),
+    )
+    assert response.status_code == 403
+
+
+def test_listing_deal_placement_terms_locked(client: TestClient) -> None:
+    deal_id = _create_listing_deal(client, advertiser_id=101, owner_id=202)
+
+    response = client.patch(
+        f"/deals/{deal_id}",
+        json={"placement_type": "story", "exclusive_hours": 6, "retention_hours": 48},
         headers=_auth_headers(101),
     )
     assert response.status_code == 403

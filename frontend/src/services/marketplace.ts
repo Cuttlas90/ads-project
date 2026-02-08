@@ -4,6 +4,11 @@ import type { MarketplaceListingPage } from '../types/api'
 export interface MarketplaceQuery {
   min_price?: number
   max_price?: number
+  placement_type?: 'post' | 'story'
+  min_exclusive_hours?: number
+  max_exclusive_hours?: number
+  min_retention_hours?: number
+  max_retention_hours?: number
   min_subscribers?: number
   max_subscribers?: number
   min_avg_views?: number

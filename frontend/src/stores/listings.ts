@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 
 import type { ListingDetail, ListingFormatSummary } from '../types/api'
+import type { ListingFormatPayload, ListingFormatUpdatePayload } from '../services/listings'
 import { listingsService } from '../services/listings'
 
 interface ListingsState {
@@ -44,12 +45,12 @@ export const useListingsStore = defineStore('listings', {
         this.loading = false
       }
     },
-    async addFormat(label: string, price: number) {
+    async addFormat(payload: ListingFormatPayload) {
       if (!this.listing) return
       this.loading = true
       this.error = null
       try {
-        const format = await listingsService.createFormat(this.listing.id, label, price)
+        const format = await listingsService.createFormat(this.listing.id, payload)
         this.listing = {
           ...this.listing,
           formats: [...this.listing.formats, format],
@@ -60,7 +61,7 @@ export const useListingsStore = defineStore('listings', {
         this.loading = false
       }
     },
-    async updateFormat(format: ListingFormatSummary, payload: { label?: string; price?: number }) {
+    async updateFormat(format: ListingFormatSummary, payload: ListingFormatUpdatePayload) {
       if (!this.listing) return
       this.loading = true
       this.error = null
