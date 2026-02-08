@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import hmac
 import json
@@ -16,6 +17,7 @@ from sqlmodel import Session, select
 from app.api.deps import get_db, get_settings_dep
 from app.main import app
 from app.models.campaign_application import CampaignApplication
+from app.models.campaign_request import CampaignRequest
 from app.models.channel import Channel
 from app.models.deal import Deal, DealSourceType, DealState
 from app.models.deal_event import DealEvent
@@ -117,10 +119,13 @@ def _create_listing_format(client: TestClient, listing_id: int, owner_id: int) -
     return response.json()["id"]
 
 
-def _create_campaign(client: TestClient, advertiser_id: int) -> int:
+def _create_campaign(client: TestClient, advertiser_id: int, max_acceptances: int | None = None) -> int:
+    payload: dict[str, object] = {"title": "Launch", "brief": "Details"}
+    if max_acceptances is not None:
+        payload["max_acceptances"] = max_acceptances
     response = client.post(
         "/campaigns",
-        json={"title": "Launch", "brief": "Details"},
+        json=payload,
         headers=_auth_headers(advertiser_id),
     )
     assert response.status_code == 201
@@ -259,6 +264,164 @@ def test_accept_campaign_application_creates_deal(client: TestClient, db_engine)
     with Session(db_engine) as session:
         application = session.exec(select(CampaignApplication).where(CampaignApplication.id == application_id)).one()
         assert application.status == "accepted"
+
+
+def test_accept_campaign_application_allows_multiple_deals_until_limit(client: TestClient, db_engine) -> None:
+    campaign_id = _create_campaign(client, advertiser_id=101, max_acceptances=2)
+    first_channel_id = _create_channel(client, owner_id=202, username="@multiowner1")
+    second_channel_id = _create_channel(client, owner_id=303, username="@multiowner2")
+    _mark_channel_verified(db_engine, first_channel_id)
+    _mark_channel_verified(db_engine, second_channel_id)
+
+    first_apply = client.post(
+        f"/campaigns/{campaign_id}/apply",
+        json={"channel_id": first_channel_id, "proposed_format_label": "Post"},
+        headers=_auth_headers(202),
+    )
+    second_apply = client.post(
+        f"/campaigns/{campaign_id}/apply",
+        json={"channel_id": second_channel_id, "proposed_format_label": "Story"},
+        headers=_auth_headers(303),
+    )
+    assert first_apply.status_code == 201
+    assert second_apply.status_code == 201
+
+    first_accept = client.post(
+        f"/campaigns/{campaign_id}/applications/{first_apply.json()['id']}/accept",
+        json={
+            "price_ton": "11.00",
+            "ad_type": "Post",
+            "creative_text": "Campaign one",
+            "creative_media_type": "image",
+            "creative_media_ref": "one-ref",
+        },
+        headers=_auth_headers(101),
+    )
+    second_accept = client.post(
+        f"/campaigns/{campaign_id}/applications/{second_apply.json()['id']}/accept",
+        json={
+            "price_ton": "12.00",
+            "ad_type": "Story",
+            "creative_text": "Campaign two",
+            "creative_media_type": "video",
+            "creative_media_ref": "two-ref",
+        },
+        headers=_auth_headers(101),
+    )
+    assert first_accept.status_code == 201
+    assert second_accept.status_code == 201
+
+    with Session(db_engine) as session:
+        deals = session.exec(select(Deal).where(Deal.campaign_id == campaign_id)).all()
+        assert len(deals) == 2
+        campaign = session.exec(select(CampaignRequest).where(CampaignRequest.id == campaign_id)).one()
+        assert campaign.lifecycle_state == "closed_by_limit"
+
+
+def test_accept_campaign_application_blocks_after_limit(client: TestClient, db_engine) -> None:
+    campaign_id = _create_campaign(client, advertiser_id=101, max_acceptances=1)
+    first_channel_id = _create_channel(client, owner_id=202, username="@limitowner1")
+    second_channel_id = _create_channel(client, owner_id=303, username="@limitowner2")
+    _mark_channel_verified(db_engine, first_channel_id)
+    _mark_channel_verified(db_engine, second_channel_id)
+
+    first_apply = client.post(
+        f"/campaigns/{campaign_id}/apply",
+        json={"channel_id": first_channel_id, "proposed_format_label": "Post"},
+        headers=_auth_headers(202),
+    )
+    second_apply = client.post(
+        f"/campaigns/{campaign_id}/apply",
+        json={"channel_id": second_channel_id, "proposed_format_label": "Story"},
+        headers=_auth_headers(303),
+    )
+    assert first_apply.status_code == 201
+    assert second_apply.status_code == 201
+
+    first_accept = client.post(
+        f"/campaigns/{campaign_id}/applications/{first_apply.json()['id']}/accept",
+        json={
+            "price_ton": "11.00",
+            "ad_type": "Post",
+            "creative_text": "Campaign one",
+            "creative_media_type": "image",
+            "creative_media_ref": "one-ref",
+        },
+        headers=_auth_headers(101),
+    )
+    assert first_accept.status_code == 201
+
+    second_accept = client.post(
+        f"/campaigns/{campaign_id}/applications/{second_apply.json()['id']}/accept",
+        json={
+            "price_ton": "12.00",
+            "ad_type": "Story",
+            "creative_text": "Campaign two",
+            "creative_media_type": "video",
+            "creative_media_ref": "two-ref",
+        },
+        headers=_auth_headers(101),
+    )
+    assert second_accept.status_code == 409
+
+    with Session(db_engine) as session:
+        second_application = session.exec(
+            select(CampaignApplication).where(CampaignApplication.id == second_apply.json()["id"])
+        ).one()
+        assert second_application.status == "rejected"
+
+
+def test_parallel_accept_requests_respect_max_acceptances(client: TestClient, db_engine) -> None:
+    if db_engine.dialect.name == "sqlite":
+        pytest.skip("Row-level lock semantics for FOR UPDATE are not available on SQLite.")
+
+    campaign_id = _create_campaign(client, advertiser_id=101, max_acceptances=1)
+    first_channel_id = _create_channel(client, owner_id=202, username="@parallelowner1")
+    second_channel_id = _create_channel(client, owner_id=303, username="@parallelowner2")
+    _mark_channel_verified(db_engine, first_channel_id)
+    _mark_channel_verified(db_engine, second_channel_id)
+
+    first_apply = client.post(
+        f"/campaigns/{campaign_id}/apply",
+        json={"channel_id": first_channel_id, "proposed_format_label": "Post"},
+        headers=_auth_headers(202),
+    )
+    second_apply = client.post(
+        f"/campaigns/{campaign_id}/apply",
+        json={"channel_id": second_channel_id, "proposed_format_label": "Story"},
+        headers=_auth_headers(303),
+    )
+    assert first_apply.status_code == 201
+    assert second_apply.status_code == 201
+
+    def _accept(application_id: int):
+        with TestClient(app) as thread_client:
+            return thread_client.post(
+                f"/campaigns/{campaign_id}/applications/{application_id}/accept",
+                json={
+                    "price_ton": "13.00",
+                    "ad_type": "Post",
+                    "creative_text": "Parallel",
+                    "creative_media_type": "image",
+                    "creative_media_ref": "parallel-ref",
+                },
+                headers=_auth_headers(101),
+            ).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        statuses = list(
+            pool.map(
+                _accept,
+                [first_apply.json()["id"], second_apply.json()["id"]],
+            )
+        )
+
+    assert statuses.count(201) == 1
+    assert statuses.count(409) == 1
+
+    with Session(db_engine) as session:
+        deals = session.exec(select(Deal).where(Deal.campaign_id == campaign_id)).all()
+        assert len(deals) == 1
 
 
 def test_send_deal_message(client: TestClient, monkeypatch) -> None:

@@ -41,18 +41,18 @@ const navLabels = (wrapper: ReturnType<typeof mount>) =>
 describe('App role-scoped navigation', () => {
   it('renders owner-only navigation links for owner role', () => {
     const { wrapper } = mountAppWithRole('owner')
-    expect(navLabels(wrapper)).toEqual(['Owner', 'Deals', 'Profile'])
+    expect(navLabels(wrapper)).toEqual(['Owner', 'Campaigns', 'Deals', 'Profile'])
   })
 
   it('renders advertiser-only navigation links for advertiser role', () => {
     const { wrapper } = mountAppWithRole('advertiser')
-    expect(navLabels(wrapper)).toEqual(['Marketplace', 'Campaign', 'Deals', 'Profile'])
+    expect(navLabels(wrapper)).toEqual(['Marketplace', 'Campaign', 'Offers', 'Deals', 'Profile'])
   })
 
   it('updates navigation immediately after role switch', async () => {
     const { wrapper, authStore } = mountAppWithRole('owner')
     authStore.user!.preferred_role = 'advertiser'
     await nextTick()
-    expect(navLabels(wrapper)).toEqual(['Marketplace', 'Campaign', 'Deals', 'Profile'])
+    expect(navLabels(wrapper)).toEqual(['Marketplace', 'Campaign', 'Offers', 'Deals', 'Profile'])
   })
 })

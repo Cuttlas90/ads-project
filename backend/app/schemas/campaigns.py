@@ -16,6 +16,7 @@ class CampaignRequestCreate(BaseModel):
     end_at: datetime | None = None
     min_subscribers: int | None = None
     min_avg_views: int | None = None
+    max_acceptances: int | None = None
 
 
 class CampaignRequestSummary(BaseModel):
@@ -30,6 +31,9 @@ class CampaignRequestSummary(BaseModel):
     end_at: datetime | None
     min_subscribers: int | None
     min_avg_views: int | None
+    lifecycle_state: str
+    max_acceptances: int
+    hidden_at: datetime | None
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -40,6 +44,27 @@ class CampaignRequestPage(BaseModel):
     page_size: int
     total: int
     items: list[CampaignRequestSummary]
+
+
+class CampaignDiscoverItem(BaseModel):
+    id: int
+    advertiser_id: int
+    title: str
+    brief: str
+    budget_ton: Decimal | None
+    preferred_language: str | None
+    min_subscribers: int | None
+    min_avg_views: int | None
+    max_acceptances: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class CampaignDiscoverPage(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    items: list[CampaignDiscoverItem]
 
 
 class CampaignApplicationCreate(BaseModel):
@@ -56,6 +81,7 @@ class CampaignApplicationSummary(BaseModel):
     proposed_format_label: str
     message: str | None
     status: str
+    hidden_at: datetime | None
     created_at: datetime
 
 
@@ -81,3 +107,23 @@ class CampaignApplicationPage(BaseModel):
     page_size: int
     total: int
     items: list[CampaignApplicationListingItem]
+
+
+class CampaignOfferInboxItem(BaseModel):
+    application_id: int
+    campaign_id: int
+    campaign_title: str
+    channel_id: int
+    channel_username: str | None
+    channel_title: str | None
+    owner_id: int
+    proposed_format_label: str
+    status: str
+    created_at: datetime
+
+
+class CampaignOfferInboxPage(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    items: list[CampaignOfferInboxItem]

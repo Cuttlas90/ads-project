@@ -5,6 +5,7 @@
         <TgBadge tone="success">Verified Ready</TgBadge>
         <TgBadge tone="warning">Draft listings</TgBadge>
       </div>
+      <RouterLink class="verify-link" to="/owner/campaigns">Browse campaigns</RouterLink>
       <RouterLink class="verify-link" to="/owner/deals">View deals inbox</RouterLink>
       <div class="home__add">
         <TgInput v-model="newChannel" placeholder="@yourchannel" label="Add a channel" />

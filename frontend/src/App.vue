@@ -30,12 +30,14 @@ const navConfig = {
   null: [{ to: '/profile', label: 'Profile' }],
   owner: [
     { to: '/owner', label: 'Owner' },
+    { to: '/owner/campaigns', label: 'Campaigns' },
     { to: '/owner/deals', label: 'Deals' },
     { to: '/profile', label: 'Profile' },
   ],
   advertiser: [
     { to: '/advertiser/marketplace', label: 'Marketplace' },
     { to: '/advertiser/campaigns/new', label: 'Campaign' },
+    { to: '/advertiser/offers', label: 'Offers' },
     { to: '/advertiser/deals', label: 'Deals' },
     { to: '/profile', label: 'Profile' },
   ],

@@ -1,7 +1,7 @@
 """Backend model re-exports."""
 
 from app.models.campaign_application import CampaignApplication
-from app.models.campaign_request import CampaignRequest
+from app.models.campaign_request import CampaignLifecycleState, CampaignRequest
 from app.models.channel import Channel
 from app.models.channel_member import ChannelMember
 from app.models.channel_stats_snapshot import ChannelStatsSnapshot
@@ -16,6 +16,7 @@ from app.models.wallet_proof_challenge import WalletProofChallenge
 
 __all__ = [
     "CampaignApplication",
+    "CampaignLifecycleState",
     "CampaignRequest",
     "Channel",
     "ChannelMember",
