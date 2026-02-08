@@ -70,6 +70,7 @@ async def verify_channel(
         )
     _log_phase(channel_id=channel_id, phase="bot_check", status="ok")
 
+    boosts_status = None
     phase = "telethon_connect"
     try:
         _log_phase(channel_id=channel_id, phase=phase, status="start")
@@ -87,6 +88,21 @@ async def verify_channel(
         full_response = await client(functions.channels.GetFullChannelRequest(channel=input_entity))
         stats_response = await client(functions.stats.GetBroadcastStatsRequest(channel=input_entity))
         _log_phase(channel_id=channel_id, phase=phase, status="ok")
+
+        # Boost status provides premium audience metrics when broadcast stats omit premium graph.
+        phase = "boosts_fetch"
+        _log_phase(channel_id=channel_id, phase=phase, status="start")
+        try:
+            boosts_status = await client(functions.premium.GetBoostsStatusRequest(peer=input_entity))
+            _log_phase(channel_id=channel_id, phase=phase, status="ok")
+        except Exception as exc:
+            _log_phase(
+                channel_id=channel_id,
+                phase=phase,
+                status="failed",
+                reason="boosts_status_failed",
+                error=exc,
+            )
     except TelegramAuthorizationError as exc:
         _log_phase(
             channel_id=channel_id,
@@ -125,14 +141,19 @@ async def verify_channel(
         getattr(getattr(stats_response, "views_per_post", None), "current", None)
     )
     language_stats = _to_dict(getattr(stats_response, "languages_graph", None))
-    premium_stats = _to_dict(getattr(stats_response, "premium_graph", None))
+    premium_stats = _extract_premium_stats(
+        stats_response=stats_response,
+        boosts_status=boosts_status,
+    )
 
     full_chat_id = getattr(getattr(full_response, "full_chat", None), "id", None)
     chat_id, chat_username, chat_title = _extract_chat_info(full_response)
+    boosts_status_raw = _to_dict(boosts_status)
 
     raw_stats = {
         "full_channel": _to_dict(full_response),
         "statistics": _to_dict(stats_response),
+        "boosts_status": boosts_status_raw,
         "bot_chat_member": permission_result.raw_member,
         "bot_permission_details": permission_result.permission_details,
     }
@@ -226,6 +247,52 @@ def _coerce_int(value) -> int | None:
         return None
     try:
         return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_premium_stats(*, stats_response, boosts_status) -> dict | None:
+    premium_graph = _to_dict(getattr(stats_response, "premium_graph", None))
+    premium_audience = _to_dict(getattr(boosts_status, "premium_audience", None))
+    boosts_status_raw = _to_dict(boosts_status)
+
+    premium_ratio = _extract_premium_ratio(premium_graph)
+    if premium_ratio is None:
+        premium_ratio = _extract_premium_ratio(premium_audience)
+
+    payload: dict[str, object] = {}
+    if premium_ratio is not None:
+        payload["premium_ratio"] = premium_ratio
+    if premium_audience is not None:
+        payload["premium_audience"] = premium_audience
+    if premium_graph is not None:
+        payload["premium_graph"] = premium_graph
+    if boosts_status_raw is not None:
+        payload["boosts_status"] = boosts_status_raw
+
+    return payload or None
+
+
+def _extract_premium_ratio(value) -> float | None:
+    if not isinstance(value, dict):
+        return None
+
+    premium_ratio = _coerce_float(value.get("premium_ratio"))
+    if premium_ratio is not None:
+        return premium_ratio
+
+    part = _coerce_float(value.get("part"))
+    total = _coerce_float(value.get("total"))
+    if part is None or total is None or total <= 0:
+        return None
+    return part / total
+
+
+def _coerce_float(value) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
     except (TypeError, ValueError):
         return None
 

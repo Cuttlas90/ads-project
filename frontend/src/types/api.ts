@@ -237,6 +237,7 @@ export interface MarketplaceListingFormat {
 
 export interface MarketplaceListingItem {
   listing_id: number
+  channel_id: number
   channel_username?: string | null
   channel_title?: string | null
   formats: MarketplaceListingFormat[]
@@ -252,4 +253,43 @@ export interface MarketplaceListingPage {
   page_size: number
   total: number
   items: MarketplaceListingItem[]
+}
+
+export type ChannelStatsAvailability = 'ready' | 'missing' | 'error' | 'async_pending'
+
+export interface ChannelStatsScalarMetric {
+  key: string
+  availability: ChannelStatsAvailability
+  value?: number | string | boolean | null
+  previous?: number | null
+  part?: number | null
+  total?: number | null
+  reason?: string | null
+}
+
+export interface ChannelStatsChartMetric {
+  key: string
+  availability: ChannelStatsAvailability
+  data?: Record<string, unknown> | unknown[] | string | null
+  token?: string | null
+  reason?: string | null
+}
+
+export interface ChannelStatsPremiumAudience {
+  availability: ChannelStatsAvailability
+  premium_ratio?: number | null
+  part?: number | null
+  total?: number | null
+}
+
+export interface ChannelStatsResponse {
+  channel_id: number
+  channel_username?: string | null
+  channel_title?: string | null
+  captured_at?: string | null
+  snapshot_available: boolean
+  read_only: boolean
+  scalar_metrics: ChannelStatsScalarMetric[]
+  chart_metrics: ChannelStatsChartMetric[]
+  premium_audience: ChannelStatsPremiumAudience
 }
