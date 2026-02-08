@@ -4,11 +4,15 @@
 TBD - created by archiving change add-marketplace-listings. Update Purpose after archive.
 ## Requirements
 ### Requirement: Marketplace browse endpoint
-The system SHALL expose `GET /marketplace/listings` with optional authentication. It SHALL accept `min_price`, `max_price`, `placement_type`, `min_exclusive_hours`, `max_exclusive_hours`, `min_retention_hours`, `max_retention_hours`, `min_subscribers`, `max_subscribers`, `min_avg_views`, `max_avg_views`, `language`, `min_premium_pct`, `search`, `page` (default 1), `page_size` (default 20), and `sort` (optional: `price`, `subscribers`). It SHALL return a list of listings with channel `username` and `title`, listing formats (`id`, `placement_type`, `exclusive_hours`, `retention_hours`, `price`), and key stats (`subscribers`, `avg_views`, `premium_ratio`) along with pagination metadata. Invalid parameters SHALL return HTTP 400 with a clear error message.
+The system SHALL expose `GET /marketplace/listings` with optional authentication. It SHALL accept `min_price`, `max_price`, `min_subscribers`, `max_subscribers`, `min_avg_views`, `max_avg_views`, `language`, `min_premium_pct`, `search`, `page` (default 1), `page_size` (default 20), and `sort` (optional: `price`, `subscribers`). It SHALL return a list of listings with `listing_id`, channel identity (`channel_id`, `username`, `title`), listing formats (`id`, `label`, `price`), and key stats (`subscribers`, `avg_views`, `premium_ratio`) along with pagination metadata. Invalid parameters SHALL return HTTP 400 with a clear error message.
 
 #### Scenario: Browse listings default
 - **WHEN** a request calls `/marketplace/listings` with no filters
 - **THEN** the response is HTTP 200 and includes listings with required fields and pagination metadata
+
+#### Scenario: Listing includes channel id for stats navigation
+- **WHEN** a client requests `/marketplace/listings`
+- **THEN** each listing item includes `channel_id` as the stable channel key for advertiser stats navigation
 
 ### Requirement: Marketplace listing eligibility and composition
 The marketplace query SHALL include only listings where `listings.is_active = true`, `channels.is_verified = true`, and the listing has at least one format. It SHALL join listings with channels, listing formats, and the latest `channel_stats_snapshots` for each channel (by `created_at`, tie-breaker `id`).
