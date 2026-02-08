@@ -2,7 +2,7 @@
   <teleport to="body">
     <div v-if="open" class="tg-modal">
       <div class="tg-modal__backdrop" @click="onBackdrop"></div>
-      <div class="tg-modal__panel">
+      <div class="tg-modal__panel" :style="{ '--tg-modal-max-width': props.maxWidth }">
         <header class="tg-modal__header">
           <h3>{{ title }}</h3>
           <button class="tg-modal__close" type="button" @click="emit('close')">×</button>
@@ -23,10 +23,12 @@ interface Props {
   open: boolean
   title: string
   closeOnBackdrop?: boolean
+  maxWidth?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
   closeOnBackdrop: true,
+  maxWidth: '420px',
 })
 
 const emit = defineEmits<{ close: [] }>()
@@ -56,7 +58,7 @@ const onBackdrop = () => {
 
 .tg-modal__panel {
   position: relative;
-  width: min(92vw, 420px);
+  width: min(92vw, var(--tg-modal-max-width, 420px));
   background: var(--app-surface);
   border-radius: var(--app-radius-lg);
   padding: 1.25rem;

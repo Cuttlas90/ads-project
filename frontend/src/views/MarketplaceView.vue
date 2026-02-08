@@ -23,7 +23,7 @@
           <TgInput v-model="filters.min_retention_hours" label="Min retention hours" type="number" />
           <TgInput v-model="filters.max_retention_hours" label="Max retention hours" type="number" />
         </div>
-        <TgButton full-width :loading="loading" @click="loadListings">Apply filters</TgButton>
+        <TgButton full-width :loading="loadingListings" @click="loadListings">Apply filters</TgButton>
       </div>
 
       <TgStatePanel v-if="error" title="Couldn't load listings" :description="error">
@@ -31,7 +31,7 @@
       </TgStatePanel>
 
       <div v-else class="marketplace__list">
-        <TgSkeleton v-if="loading" height="120px" />
+        <TgSkeleton v-if="loadingListings" height="120px" />
         <TgStatePanel
           v-else-if="!items.length"
           title="No listings"
@@ -62,38 +62,67 @@
       </div>
     </TgCard>
 
-    <TgModal :open="showModal" title="Start deal" @close="closeModal">
+    <TgModal :open="showModal" title="Start deal" max-width="520px" @close="closeModal">
       <div class="marketplace__modal">
         <p v-if="selectedFormat" class="marketplace__selected">
           Selected: {{ selectedFormat.placement_type }} · {{ selectedFormat.exclusive_hours }}h exclusive ·
           {{ selectedFormat.retention_hours }}h retention · {{ selectedFormat.price }} TON
         </p>
-        <TgInput
-          v-model="dealForm.creative_text"
-          label="Creative text"
-          placeholder="Write your ad copy"
-        />
-        <TgInput v-model="dealForm.creative_media_type" label="Media type (image/video)" />
-        <TgInput v-model="dealForm.creative_media_ref" label="Media ref (file_id)" />
+        <label class="marketplace__field">
+          <span>Creative text</span>
+          <textarea
+            v-model="dealForm.creative_text"
+            class="marketplace__textarea"
+            rows="4"
+            placeholder="Write your ad copy"
+          ></textarea>
+        </label>
+        <label class="marketplace__field">
+          <span>Media type</span>
+          <select v-model="dealForm.creative_media_type" class="marketplace__select">
+            <option value="image">Image</option>
+            <option value="video">Video</option>
+          </select>
+        </label>
+        <label class="marketplace__upload">
+          <span>Media file</span>
+          <input
+            type="file"
+            :accept="dealForm.creative_media_type === 'video' ? 'video/*' : 'image/*'"
+            :disabled="uploadingMedia || creatingDeal"
+            @change="handleCreativeFile"
+          />
+        </label>
+        <TgBadge v-if="uploadStatus" tone="success">{{ uploadStatus }}</TgBadge>
       </div>
       <template #footer>
-        <TgButton full-width :loading="loading" @click="createDeal">Start deal</TgButton>
+        <TgButton
+          full-width
+          :loading="creatingDeal"
+          :disabled="!canCreateDeal || uploadingMedia"
+          @click="createDeal"
+        >
+          Start deal
+        </TgButton>
       </template>
     </TgModal>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 
-import { TgButton, TgCard, TgInput, TgModal, TgSkeleton, TgStatePanel } from '../components/tg'
+import { TgBadge, TgButton, TgCard, TgInput, TgModal, TgSkeleton, TgStatePanel } from '../components/tg'
 import { listingsService } from '../services/listings'
 import { marketplaceService } from '../services/marketplace'
 import type { MarketplaceListingItem, MarketplaceListingFormat } from '../types/api'
 
 const items = ref<MarketplaceListingItem[]>([])
-const loading = ref(false)
+const loadingListings = ref(false)
+const creatingDeal = ref(false)
+const uploadingMedia = ref(false)
 const error = ref('')
+const uploadStatus = ref('')
 const showModal = ref(false)
 const selectedFormat = ref<MarketplaceListingFormat | null>(null)
 
@@ -116,6 +145,13 @@ const dealForm = reactive({
   creative_media_ref: '',
 })
 
+const canCreateDeal = computed(
+  () =>
+    dealForm.creative_text.trim().length > 0 &&
+    dealForm.creative_media_type.trim().length > 0 &&
+    dealForm.creative_media_ref.trim().length > 0,
+)
+
 const toNumber = (value: string) => {
   if (!value.trim()) return undefined
   const parsed = Number(value)
@@ -124,7 +160,7 @@ const toNumber = (value: string) => {
 }
 
 const loadListings = async () => {
-  loading.value = true
+  loadingListings.value = true
   error.value = ''
   try {
     const response = await marketplaceService.list({
@@ -141,16 +177,21 @@ const loadListings = async () => {
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to load listings'
   } finally {
-    loading.value = false
+    loadingListings.value = false
   }
+}
+
+const resetDealCreative = () => {
+  dealForm.creative_text = ''
+  dealForm.creative_media_ref = ''
+  dealForm.creative_media_type = 'image'
+  uploadStatus.value = ''
 }
 
 const openDealModal = (listingId: number, format: MarketplaceListingFormat) => {
   dealForm.listing_id = listingId
   dealForm.listing_format_id = format.id
-  dealForm.creative_text = ''
-  dealForm.creative_media_ref = ''
-  dealForm.creative_media_type = 'image'
+  resetDealCreative()
   selectedFormat.value = format
   showModal.value = true
 }
@@ -158,27 +199,60 @@ const openDealModal = (listingId: number, format: MarketplaceListingFormat) => {
 const closeModal = () => {
   selectedFormat.value = null
   showModal.value = false
+  resetDealCreative()
+}
+
+const handleCreativeFile = async (event: Event) => {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  if (dealForm.listing_id <= 0) {
+    error.value = 'Select a listing format before uploading media.'
+    return
+  }
+
+  const contentType = file.type || ''
+  if (!contentType.startsWith('image/') && !contentType.startsWith('video/')) {
+    error.value = 'Please select an image or video file.'
+    dealForm.creative_media_ref = ''
+    uploadStatus.value = ''
+    return
+  }
+
+  uploadingMedia.value = true
+  error.value = ''
+  uploadStatus.value = ''
+  dealForm.creative_media_ref = ''
+  try {
+    const response = await listingsService.uploadCreative(dealForm.listing_id, file)
+    dealForm.creative_media_ref = response.creative_media_ref
+    dealForm.creative_media_type = response.creative_media_type
+    uploadStatus.value = 'Uploaded to Telegram'
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Upload failed'
+  } finally {
+    uploadingMedia.value = false
+  }
 }
 
 const createDeal = async () => {
-  if (!dealForm.creative_text.trim() || !dealForm.creative_media_ref.trim()) {
-    error.value = 'Provide creative text and media ref.'
+  if (!canCreateDeal.value) {
+    error.value = 'Please add creative text and upload media before starting deal.'
     return
   }
-  loading.value = true
+  creatingDeal.value = true
+  error.value = ''
   try {
     await listingsService.createDealFromListing(dealForm.listing_id, {
       listing_format_id: dealForm.listing_format_id,
       creative_text: dealForm.creative_text.trim(),
-      creative_media_type: dealForm.creative_media_type.trim(),
+      creative_media_type: dealForm.creative_media_type,
       creative_media_ref: dealForm.creative_media_ref.trim(),
     })
-    showModal.value = false
-    selectedFormat.value = null
+    closeModal()
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to start deal'
   } finally {
-    loading.value = false
+    creatingDeal.value = false
   }
 }
 
@@ -220,6 +294,24 @@ onMounted(() => {
   color: var(--app-ink);
 }
 
+.marketplace__textarea {
+  border-radius: var(--app-radius-md);
+  border: 1px solid var(--app-border);
+  padding: 0.65rem 0.85rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  background: var(--app-surface);
+  color: var(--app-ink);
+  resize: vertical;
+  min-height: 120px;
+}
+
+.marketplace__textarea:focus {
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 3px rgba(11, 122, 117, 0.15);
+  outline: none;
+}
+
 .marketplace__list {
   display: grid;
   gap: 0.85rem;
@@ -239,6 +331,20 @@ onMounted(() => {
 .marketplace__modal {
   display: grid;
   gap: 0.75rem;
+}
+
+.marketplace__upload {
+  display: grid;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  color: var(--app-ink-muted);
+}
+
+.marketplace__upload input {
+  border-radius: var(--app-radius-md);
+  border: 1px dashed rgba(25, 25, 25, 0.25);
+  padding: 0.65rem;
+  background: var(--app-surface);
 }
 
 .marketplace__selected {

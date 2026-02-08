@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_settings_dep
 from app.models.channel import Channel
 from app.models.channel_member import ChannelMember
 from app.models.deal import Deal, DealSourceType
@@ -14,7 +14,7 @@ from app.models.listing import Listing
 from app.models.listing_format import ListingFormat
 from app.models.user import User
 from app.schemas.channel import ChannelRole
-from app.schemas.deals import DealCreateFromListing, DealSummary
+from app.schemas.deals import DealCreateFromListing, DealCreativeUploadResponse, DealSummary
 from app.schemas.listing import (
     ListingCreate,
     ListingFormatCreate,
@@ -23,6 +23,9 @@ from app.schemas.listing import (
     ListingSummary,
     ListingUpdate,
 )
+from app.settings import Settings
+from shared.telegram.bot_api import BotApiService
+from shared.telegram.errors import TelegramApiError, TelegramConfigError
 
 router = APIRouter(prefix="/listings", tags=["listings"])
 
@@ -278,6 +281,46 @@ def update_listing_format(
         exclusive_hours=listing_format.exclusive_hours,
         retention_hours=listing_format.retention_hours,
         price=listing_format.price,
+    )
+
+
+@router.post("/{listing_id}/creative/upload", response_model=DealCreativeUploadResponse)
+def upload_listing_creative_media(
+    listing_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings_dep),
+) -> DealCreativeUploadResponse:
+    listing = _load_listing(db, listing_id)
+    if not listing.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Listing is inactive")
+
+    content_type = file.content_type or ""
+    if content_type.startswith("image/"):
+        media_type = "image"
+    elif content_type.startswith("video/"):
+        media_type = "video"
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid creative_media_type")
+
+    content = file.file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty upload")
+
+    service = BotApiService(settings)
+    try:
+        result = service.upload_media(
+            media_type=media_type,
+            filename=file.filename or f"creative.{media_type}",
+            content=content,
+        )
+    except (TelegramApiError, TelegramConfigError) as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to upload media") from exc
+
+    return DealCreativeUploadResponse(
+        creative_media_ref=result["file_id"],
+        creative_media_type=result["media_type"],
     )
 
 

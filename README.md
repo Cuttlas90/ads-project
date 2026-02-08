@@ -60,6 +60,13 @@ Notes:
 - The bootstrap command prompts for phone, OTP, and 2FA only when needed.
 - OTP, 2FA password, and raw session string are not logged by the command.
 
+### Telegram Media Upload Channel
+Creative uploads use Telegram Bot API and require a private storage channel:
+
+- Set `TELEGRAM_MEDIA_CHANNEL_ID` in `.env` to the channel chat ID (typically `-100...`).
+- Add the bot to that private channel as admin.
+- Ensure the bot has permission to send photos/videos in that channel.
+
 ### Frontend
 ```bash
 cd frontend

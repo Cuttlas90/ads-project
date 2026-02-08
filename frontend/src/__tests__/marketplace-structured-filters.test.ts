@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   listMarketplaceMock: vi.fn(),
+  createDealFromListingMock: vi.fn(),
+  uploadCreativeMock: vi.fn(),
 }))
 
 vi.mock('../services/marketplace', () => ({
@@ -17,15 +19,30 @@ vi.mock('../services/listings', () => ({
     update: vi.fn(),
     createFormat: vi.fn(),
     updateFormat: vi.fn(),
-    createDealFromListing: vi.fn(),
+    createDealFromListing: mocks.createDealFromListingMock,
+    uploadCreative: mocks.uploadCreativeMock,
   },
 }))
 
 import MarketplaceView from '../views/MarketplaceView.vue'
 
 describe('MarketplaceView structured filters and display', () => {
+  const mountView = () =>
+    mount(MarketplaceView, {
+      global: {
+        stubs: {
+          teleport: true,
+        },
+      },
+    })
+
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.createDealFromListingMock.mockResolvedValue({ id: 1 })
+    mocks.uploadCreativeMock.mockResolvedValue({
+      creative_media_ref: 'file-123',
+      creative_media_type: 'image',
+    })
     mocks.listMarketplaceMock.mockResolvedValue({
       page: 1,
       page_size: 20,
@@ -55,7 +72,7 @@ describe('MarketplaceView structured filters and display', () => {
   })
 
   it('renders structured format commitments and forwards structured filters', async () => {
-    const wrapper = mount(MarketplaceView)
+    const wrapper = mountView()
     await flushPromises()
 
     expect(wrapper.text()).toContain('exclusive')
@@ -85,6 +102,53 @@ describe('MarketplaceView structured filters and display', () => {
       max_exclusive_hours: undefined,
       min_retention_hours: 24,
       max_retention_hours: undefined,
+    })
+  })
+
+  it('enforces upload-first start deal and submits using upload response media fields', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    const formatButton = wrapper.findAll('button').find((button) => button.text().includes('exclusive'))
+    expect(formatButton).toBeDefined()
+    await formatButton!.trigger('click')
+    await flushPromises()
+
+    let startButton = wrapper.find('.tg-modal__footer .tg-button')
+    expect(startButton.exists()).toBe(true)
+    expect(startButton.attributes('disabled')).toBeDefined()
+
+    await wrapper.find('textarea.marketplace__textarea').setValue('Launch copy')
+    startButton = wrapper.find('.tg-modal__footer .tg-button')
+    expect(startButton.attributes('disabled')).toBeDefined()
+
+    const modalSelects = wrapper.findAll('select.marketplace__select')
+    await modalSelects[1].setValue('video')
+
+    const file = new File(['img'], 'creative.jpg', { type: 'image/jpeg' })
+    const fileInput = wrapper.find('input[type="file"]')
+    Object.defineProperty(fileInput.element, 'files', {
+      value: [file],
+      configurable: true,
+    })
+    await fileInput.trigger('change')
+    await flushPromises()
+    await flushPromises()
+
+    expect(mocks.uploadCreativeMock).toHaveBeenCalledTimes(1)
+    expect(mocks.uploadCreativeMock).toHaveBeenCalledWith(90, file)
+    startButton = wrapper.find('.tg-modal__footer .tg-button')
+    expect(startButton.attributes('disabled')).toBeUndefined()
+
+    await startButton.trigger('click')
+    await flushPromises()
+
+    expect(mocks.createDealFromListingMock).toHaveBeenCalledTimes(1)
+    expect(mocks.createDealFromListingMock).toHaveBeenCalledWith(90, {
+      listing_format_id: 11,
+      creative_text: 'Launch copy',
+      creative_media_type: 'image',
+      creative_media_ref: 'file-123',
     })
   })
 })

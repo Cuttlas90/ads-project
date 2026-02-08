@@ -22,6 +22,7 @@ from app.models.user import User
 from app.schemas.channel import ChannelRole
 from app.settings import Settings
 from shared.db.base import SQLModel
+import shared.telegram.bot_api as bot_api
 
 BOT_TOKEN = "test-bot-token"
 
@@ -53,7 +54,11 @@ def client(db_engine):
             yield session
 
     def override_get_settings() -> Settings:
-        return Settings(_env_file=None, TELEGRAM_BOT_TOKEN=BOT_TOKEN)
+        return Settings(
+            _env_file=None,
+            TELEGRAM_BOT_TOKEN=BOT_TOKEN,
+            TELEGRAM_MEDIA_CHANNEL_ID=123,
+        )
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_settings_dep] = override_get_settings
@@ -115,6 +120,15 @@ def _create_listing_format(
         headers=_auth_headers(owner_id),
     )
     return response.json()["id"]
+
+
+def _activate_listing(client: TestClient, listing_id: int, owner_id: int) -> None:
+    response = client.put(
+        f"/listings/{listing_id}",
+        json={"is_active": True},
+        headers=_auth_headers(owner_id),
+    )
+    assert response.status_code == 200
 
 
 def test_create_listing_success(client: TestClient, db_engine) -> None:
@@ -391,3 +405,121 @@ def test_listing_owner_membership_enforced(client: TestClient, db_engine) -> Non
             .where(ChannelMember.user_id == owner_user.id)
         ).one()
         assert membership.role == ChannelRole.owner.value
+
+
+def test_upload_listing_creative_success(client: TestClient, monkeypatch) -> None:
+    def fake_post(url: str, data: dict, files: dict):
+        class DummyResponse:
+            status_code = 200
+
+            def json(self) -> dict:
+                return {"ok": True, "result": {"photo": [{"file_id": "file-1"}]}}
+
+        return DummyResponse()
+
+    monkeypatch.setattr(bot_api.httpx, "post", fake_post)
+
+    channel_id = _create_channel(client, owner_id=123, username="@ownerchannel")
+    listing_id = _create_listing(client, channel_id, owner_id=123)
+    _create_listing_format(client, listing_id, owner_id=123)
+    _activate_listing(client, listing_id, owner_id=123)
+
+    response = client.post(
+        f"/listings/{listing_id}/creative/upload",
+        files={"file": ("photo.jpg", b"data", "image/jpeg")},
+        headers=_auth_headers(456),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["creative_media_ref"] == "file-1"
+    assert payload["creative_media_type"] == "image"
+
+
+def test_upload_listing_creative_requires_active_listing(client: TestClient) -> None:
+    channel_id = _create_channel(client, owner_id=123, username="@ownerchannel")
+    listing_id = _create_listing(client, channel_id, owner_id=123)
+
+    response = client.post(
+        f"/listings/{listing_id}/creative/upload",
+        files={"file": ("photo.jpg", b"data", "image/jpeg")},
+        headers=_auth_headers(456),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Listing is inactive"
+
+
+def test_upload_listing_creative_rejects_invalid_media_type(client: TestClient) -> None:
+    channel_id = _create_channel(client, owner_id=123, username="@ownerchannel")
+    listing_id = _create_listing(client, channel_id, owner_id=123)
+    _create_listing_format(client, listing_id, owner_id=123)
+    _activate_listing(client, listing_id, owner_id=123)
+
+    response = client.post(
+        f"/listings/{listing_id}/creative/upload",
+        files={"file": ("note.txt", b"text", "text/plain")},
+        headers=_auth_headers(456),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid creative_media_type"
+
+
+def test_upload_listing_creative_maps_telegram_failure_to_502(client: TestClient, monkeypatch) -> None:
+    def fake_post(url: str, data: dict, files: dict):
+        class DummyResponse:
+            status_code = 500
+            text = "upstream error"
+
+            def json(self) -> dict:
+                return {"ok": False}
+
+        return DummyResponse()
+
+    monkeypatch.setattr(bot_api.httpx, "post", fake_post)
+
+    channel_id = _create_channel(client, owner_id=123, username="@ownerchannel")
+    listing_id = _create_listing(client, channel_id, owner_id=123)
+    _create_listing_format(client, listing_id, owner_id=123)
+    _activate_listing(client, listing_id, owner_id=123)
+
+    response = client.post(
+        f"/listings/{listing_id}/creative/upload",
+        files={"file": ("photo.jpg", b"data", "image/jpeg")},
+        headers=_auth_headers(456),
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Failed to upload media"
+
+
+def test_upload_listing_creative_maps_missing_config_to_502(client: TestClient) -> None:
+    def override_without_media_channel() -> Settings:
+        return Settings(
+            _env_file=None,
+            TELEGRAM_BOT_TOKEN=BOT_TOKEN,
+            TELEGRAM_MEDIA_CHANNEL_ID=None,
+        )
+
+    original = app.dependency_overrides.get(get_settings_dep)
+    app.dependency_overrides[get_settings_dep] = override_without_media_channel
+    try:
+        channel_id = _create_channel(client, owner_id=123, username="@ownerchannel")
+        listing_id = _create_listing(client, channel_id, owner_id=123)
+        _create_listing_format(client, listing_id, owner_id=123)
+        _activate_listing(client, listing_id, owner_id=123)
+
+        response = client.post(
+            f"/listings/{listing_id}/creative/upload",
+            files={"file": ("photo.jpg", b"data", "image/jpeg")},
+            headers=_auth_headers(456),
+        )
+    finally:
+        if original is not None:
+            app.dependency_overrides[get_settings_dep] = original
+        else:
+            app.dependency_overrides.pop(get_settings_dep, None)
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Failed to upload media"

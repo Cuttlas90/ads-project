@@ -15,6 +15,11 @@ export interface ListingFormatUpdatePayload {
   price?: number
 }
 
+export interface ListingCreativeUploadResponse {
+  creative_media_ref: string
+  creative_media_type: 'image' | 'video'
+}
+
 export const listingsService = {
   create(channel_id: number) {
     return api.post<ListingSummary>('/listings', { channel_id })
@@ -27,6 +32,11 @@ export const listingsService = {
   },
   updateFormat(listingId: number, formatId: number, payload: ListingFormatUpdatePayload) {
     return api.put<ListingFormatSummary>(`/listings/${listingId}/formats/${formatId}`, payload)
+  },
+  uploadCreative(listingId: number, file: File) {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post<ListingCreativeUploadResponse>(`/listings/${listingId}/creative/upload`, formData)
   },
   createDealFromListing(listingId: number, payload: Record<string, unknown>) {
     return api.post(`/listings/${listingId}/deals`, payload)
