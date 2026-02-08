@@ -19,6 +19,11 @@ describe('role routing helpers', () => {
     expect(resolveAccessRedirect('owner', 'advertiser')).toBe('/advertiser/marketplace')
   })
 
+  it('redirects cross-role stats routes to role defaults', () => {
+    expect(resolveAccessRedirect('advertiser', 'owner')).toBe('/owner')
+    expect(resolveAccessRedirect('owner', 'advertiser')).toBe('/advertiser/marketplace')
+  })
+
   it('allows shared profile route for null role and blocks other shared routes', () => {
     expect(resolveAccessRedirect('shared', null, true)).toBeNull()
     expect(resolveAccessRedirect('shared', null, false)).toBe('/profile')

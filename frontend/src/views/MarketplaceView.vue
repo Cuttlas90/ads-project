@@ -21,11 +21,10 @@
           title="No listings"
           description="Try different filters."
         />
-        <TgCard
-          v-for="listing in items"
-          :key="listing.listing_id"
-          :title="listing.channel_title || listing.channel_username || 'Channel'"
-        >
+        <TgCard v-for="listing in items" :key="listing.listing_id">
+          <RouterLink class="marketplace__channel-link" :to="statsRoute(listing.channel_id)">
+            {{ listing.channel_title || listing.channel_username || 'Channel' }}
+          </RouterLink>
           <p class="marketplace__meta">
             {{ listing.stats.subscribers ?? '--' }} subscribers ·
             {{ listing.stats.avg_views ?? '--' }} avg views
@@ -64,6 +63,7 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 
 import { TgButton, TgCard, TgInput, TgModal, TgSkeleton, TgStatePanel } from '../components/tg'
 import { listingsService } from '../services/listings'
@@ -114,6 +114,8 @@ const openDealModal = (listingId: number, format: MarketplaceListingFormat) => {
   dealForm.creative_media_type = 'image'
   showModal.value = true
 }
+
+const statsRoute = (channelId: number) => `/advertiser/channels/${channelId}/stats`
 
 const closeModal = () => {
   showModal.value = false
@@ -166,6 +168,13 @@ onMounted(() => {
 .marketplace__meta {
   margin: 0.35rem 0 0.75rem;
   color: var(--app-ink-muted);
+}
+
+.marketplace__channel-link {
+  display: inline-block;
+  font-weight: 700;
+  color: var(--app-accent);
+  margin-bottom: 0.35rem;
 }
 
 .marketplace__formats {

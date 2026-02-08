@@ -120,6 +120,15 @@ class DummyGraph:
         return {"data": self.data}
 
 
+class DummyStatsPercentValue:
+    def __init__(self, *, part: float, total: float) -> None:
+        self.part = part
+        self.total = total
+
+    def to_dict(self):
+        return {"_": "StatsPercentValue", "part": self.part, "total": self.total}
+
+
 class DummyStatsResponse:
     def __init__(self, *, views_per_post: DummyViewsPerPost, languages_graph: DummyGraph) -> None:
         self.views_per_post = views_per_post
@@ -132,17 +141,34 @@ class DummyStatsResponse:
         }
 
 
+class DummyBoostsStatusResponse:
+    def __init__(self, *, premium_audience: DummyStatsPercentValue | None = None) -> None:
+        self.premium_audience = premium_audience
+
+    def to_dict(self):
+        return {
+            "_": "BoostsStatus",
+            "premium_audience": (
+                self.premium_audience.to_dict() if self.premium_audience is not None else None
+            ),
+        }
+
+
 class DummyTelethonClient:
     def __init__(
         self,
         full_response: DummyFullResponse,
         stats_response: DummyStatsResponse,
+        boosts_status: DummyBoostsStatusResponse | None = None,
         *,
         authorized: bool = True,
+        boosts_error: Exception | None = None,
     ) -> None:
         self._full_response = full_response
         self._stats_response = stats_response
+        self._boosts_status = boosts_status
         self._authorized = authorized
+        self._boosts_error = boosts_error
 
     async def get_input_entity(self, channel):
         return channel
@@ -156,6 +182,10 @@ class DummyTelethonClient:
             return self._full_response
         if name == "GetBroadcastStatsRequest":
             return self._stats_response
+        if name == "GetBoostsStatusRequest":
+            if self._boosts_error is not None:
+                raise self._boosts_error
+            return self._boosts_status
         raise AssertionError(f"Unexpected request: {name}")
 
 
@@ -163,11 +193,19 @@ def _patch_telegram(
     monkeypatch,
     full_response: DummyFullResponse,
     stats_response: DummyStatsResponse,
+    boosts_status: DummyBoostsStatusResponse | None = None,
     *,
     authorized: bool = True,
     connect_error: Exception | None = None,
+    boosts_error: Exception | None = None,
 ):
-    dummy_client = DummyTelethonClient(full_response, stats_response, authorized=authorized)
+    dummy_client = DummyTelethonClient(
+        full_response,
+        stats_response,
+        boosts_status,
+        authorized=authorized,
+        boosts_error=boosts_error,
+    )
 
     class DummyService:
         def __init__(self, _settings) -> None:
@@ -307,6 +345,133 @@ def test_verify_channel_success_creates_snapshot(client: TestClient, db_engine, 
         assert snapshot.raw_stats is not None
         assert snapshot.raw_stats["bot_chat_member"]["status"] == "administrator"
         assert snapshot.raw_stats["bot_permission_details"]["can_post_messages"] is True
+
+
+def test_verify_channel_derives_premium_ratio_from_boosts_status(
+    client: TestClient, db_engine, monkeypatch
+) -> None:
+    async def fake_check_bot_permissions(_bot_api, _channel):
+        return PermissionCheckResult(
+            ok=True,
+            is_admin=True,
+            missing_permissions=[],
+            present_permissions=["can_edit_messages", "can_post_messages"],
+            permission_details={
+                "can_post_messages": True,
+                "can_edit_messages": True,
+                "can_manage_chat": True,
+            },
+            raw_member={
+                "status": "administrator",
+                "can_post_messages": True,
+                "can_edit_messages": True,
+                "can_manage_chat": True,
+            },
+        )
+
+    monkeypatch.setattr(channel_verify_service, "check_bot_permissions", fake_check_bot_permissions)
+
+    full_response = DummyFullResponse(
+        full_chat=DummyFullChat(participants_count=4511, id=999),
+        chats=[DummyChat(id=999, username="premiumexample", title="Premium Example")],
+    )
+    stats_response = DummyStatsResponse(
+        views_per_post=DummyViewsPerPost(current=1740),
+        languages_graph=DummyGraph(data={"en": 80}),
+    )
+    boosts_status = DummyBoostsStatusResponse(
+        premium_audience=DummyStatsPercentValue(part=56.0, total=4511.0)
+    )
+    _patch_telegram(
+        monkeypatch,
+        full_response,
+        stats_response,
+        boosts_status,
+    )
+
+    created = client.post(
+        "/channels",
+        json={"username": "@premiumexamplechannel"},
+        headers=_auth_headers(123),
+    )
+    channel_id = created.json()["id"]
+
+    response = client.post(
+        f"/channels/{channel_id}/verify",
+        headers=_auth_headers(123),
+    )
+
+    assert response.status_code == 200
+
+    with Session(db_engine) as session:
+        snapshot = session.exec(
+            select(ChannelStatsSnapshot).where(ChannelStatsSnapshot.channel_id == channel_id)
+        ).one()
+        assert isinstance(snapshot.premium_stats, dict)
+        assert snapshot.premium_stats["premium_ratio"] == pytest.approx(56.0 / 4511.0)
+        assert snapshot.premium_stats["premium_audience"]["part"] == 56.0
+        assert snapshot.premium_stats["premium_audience"]["total"] == 4511.0
+        assert snapshot.raw_stats is not None
+        assert snapshot.raw_stats["boosts_status"]["_"] == "BoostsStatus"
+
+
+def test_verify_channel_boosts_failure_is_non_blocking(client: TestClient, db_engine, monkeypatch) -> None:
+    async def fake_check_bot_permissions(_bot_api, _channel):
+        return PermissionCheckResult(
+            ok=True,
+            is_admin=True,
+            missing_permissions=[],
+            present_permissions=["can_edit_messages", "can_post_messages"],
+            permission_details={
+                "can_post_messages": True,
+                "can_edit_messages": True,
+                "can_manage_chat": True,
+            },
+            raw_member={
+                "status": "administrator",
+                "can_post_messages": True,
+                "can_edit_messages": True,
+                "can_manage_chat": True,
+            },
+        )
+
+    monkeypatch.setattr(channel_verify_service, "check_bot_permissions", fake_check_bot_permissions)
+
+    full_response = DummyFullResponse(
+        full_chat=DummyFullChat(participants_count=3200, id=888),
+        chats=[DummyChat(id=888, username="boostsfailure", title="Boosts Failure")],
+    )
+    stats_response = DummyStatsResponse(
+        views_per_post=DummyViewsPerPost(current=1400),
+        languages_graph=DummyGraph(data={"en": 80}),
+    )
+    _patch_telegram(
+        monkeypatch,
+        full_response,
+        stats_response,
+        boosts_error=RuntimeError("boosts unavailable"),
+    )
+
+    created = client.post(
+        "/channels",
+        json={"username": "@boostsfailurechannel"},
+        headers=_auth_headers(123),
+    )
+    channel_id = created.json()["id"]
+
+    response = client.post(
+        f"/channels/{channel_id}/verify",
+        headers=_auth_headers(123),
+    )
+
+    assert response.status_code == 200
+
+    with Session(db_engine) as session:
+        snapshot = session.exec(
+            select(ChannelStatsSnapshot).where(ChannelStatsSnapshot.channel_id == channel_id)
+        ).one()
+        assert snapshot.raw_stats is not None
+        assert snapshot.raw_stats["boosts_status"] is None
 
 
 def test_verify_channel_serializes_bytes_in_raw_stats(client: TestClient, db_engine, monkeypatch) -> None:

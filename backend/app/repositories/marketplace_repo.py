@@ -26,6 +26,7 @@ class MarketplaceListingFormatResult:
 @dataclass(frozen=True)
 class MarketplaceListingResult:
     listing_id: int
+    channel_id: int
     channel_username: str | None
     channel_title: str | None
     subscribers: int | None
@@ -116,6 +117,7 @@ def fetch_marketplace_listings(
     items = [
         MarketplaceListingResult(
             listing_id=row.listing_id,
+            channel_id=row.channel_id,
             channel_username=row.channel_username,
             channel_title=row.channel_title,
             subscribers=row.subscribers,

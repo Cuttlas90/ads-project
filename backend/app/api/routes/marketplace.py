@@ -114,6 +114,7 @@ def list_marketplace_listings(
     items = [
         MarketplaceListing(
             listing_id=item.listing_id,
+            channel_id=item.channel_id,
             channel_username=item.channel_username,
             channel_title=item.channel_title,
             formats=[

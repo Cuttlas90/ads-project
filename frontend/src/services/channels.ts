@@ -1,5 +1,5 @@
 import { api } from './api'
-import type { ChannelListingResponse, ChannelSummary } from '../types/api'
+import type { ChannelListingResponse, ChannelStatsResponse, ChannelSummary } from '../types/api'
 
 export const channelsService = {
   list() {
@@ -13,5 +13,8 @@ export const channelsService = {
   },
   readListing(channelId: number) {
     return api.get<ChannelListingResponse>(`/channels/${channelId}/listing`)
+  },
+  readStats(channelId: number) {
+    return api.get<ChannelStatsResponse>(`/channels/${channelId}/stats`)
   },
 }

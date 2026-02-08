@@ -178,6 +178,8 @@ def test_marketplace_excludes_unverified_or_inactive(client: TestClient, db_engi
     assert response.status_code == 200
     payload = response.json()
     assert len(payload["items"]) == 1
+    assert "channel_id" in payload["items"][0]
+    assert isinstance(payload["items"][0]["channel_id"], int)
     assert payload["items"][0]["channel_username"] == "verified"
 
 

@@ -13,6 +13,7 @@ import CampaignCreateView from '../views/CampaignCreateView.vue'
 import AdvertiserDealsView from '../views/AdvertiserDealsView.vue'
 import AdvertiserCreativeReviewView from '../views/AdvertiserCreativeReviewView.vue'
 import FundingView from '../views/FundingView.vue'
+import ChannelStatsView from '../views/ChannelStatsView.vue'
 import EntryResolverView from '../views/EntryResolverView.vue'
 import ProfileView from '../views/ProfileView.vue'
 import type { RouteAccess } from './roleAccess'
@@ -54,6 +55,12 @@ const routes: RouteRecordRaw[] = [
     component: ListingEditorView,
     meta: routeMeta('owner'),
   },
+  {
+    path: '/owner/channels/:channelId/stats',
+    name: 'owner-channel-stats',
+    component: ChannelStatsView,
+    meta: routeMeta('owner'),
+  },
   { path: '/owner/deals', name: 'owner-deals', component: OwnerDealsView, meta: routeMeta('owner') },
   {
     path: '/owner/deals/:id/creative',
@@ -71,6 +78,12 @@ const routes: RouteRecordRaw[] = [
     path: '/advertiser/marketplace',
     name: 'marketplace',
     component: MarketplaceView,
+    meta: routeMeta('advertiser'),
+  },
+  {
+    path: '/advertiser/channels/:channelId/stats',
+    name: 'advertiser-channel-stats',
+    component: ChannelStatsView,
     meta: routeMeta('advertiser'),
   },
   {

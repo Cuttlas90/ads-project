@@ -19,7 +19,9 @@ from app.models.listing import Listing
 from app.models.listing_format import ListingFormat
 from app.models.user import User
 from app.schemas.channel import ChannelCreate, ChannelRole, ChannelSummary, ChannelWithRole
+from app.schemas.channel_stats import ChannelStatsResponse
 from app.schemas.listing import ChannelListingResponse, ListingDetail, ListingFormatSummary
+from app.services.channel_stats import build_channel_stats_response, read_latest_channel_snapshot
 from app.services.channel_verify import verify_channel
 from app.settings import Settings
 from shared.telegram import BotApiService, TelegramClientService
@@ -65,6 +67,36 @@ def _require_owner_membership(db: Session, *, channel_id: int, user_id: int | No
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only channel owners may manage listings",
         )
+
+
+def _has_owner_or_manager_membership(db: Session, *, channel_id: int, user_id: int | None) -> bool:
+    if user_id is None:
+        return False
+    membership = (
+        db.exec(
+            select(ChannelMember)
+            .where(ChannelMember.channel_id == channel_id)
+            .where(ChannelMember.user_id == user_id)
+            .where(ChannelMember.role.in_([ChannelRole.owner.value, ChannelRole.manager.value]))
+        )
+        .first()
+    )
+    return membership is not None
+
+
+def _is_marketplace_eligible_for_stats(db: Session, *, channel: Channel) -> bool:
+    if not channel.is_verified:
+        return False
+    listing = (
+        db.exec(
+            select(Listing.id)
+            .where(Listing.channel_id == channel.id)
+            .where(Listing.is_active.is_(True))
+            .limit(1)
+        )
+        .first()
+    )
+    return listing is not None
 
 
 @router.post("", response_model=ChannelWithRole, status_code=status.HTTP_201_CREATED)
@@ -172,6 +204,29 @@ def read_channel_listing(
             ],
         ),
     )
+
+
+@router.get("/{channel_id}/stats", response_model=ChannelStatsResponse)
+def read_channel_stats(
+    channel_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ChannelStatsResponse:
+    channel = db.exec(select(Channel).where(Channel.id == channel_id)).first()
+    if channel is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel not found")
+
+    owner_or_manager_access = _has_owner_or_manager_membership(
+        db,
+        channel_id=channel_id,
+        user_id=current_user.id,
+    )
+    marketplace_access = _is_marketplace_eligible_for_stats(db, channel=channel)
+    if not owner_or_manager_access and not marketplace_access:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel stats not found")
+
+    snapshot = read_latest_channel_snapshot(db=db, channel_id=channel_id)
+    return build_channel_stats_response(channel=channel, snapshot=snapshot)
 
 
 @router.post("/{channel_id}/verify", response_model=ChannelSummary)
