@@ -26,6 +26,10 @@ class CampaignApplication(SQLModel, table=True):
         default="submitted",
         sa_column=Column(String, nullable=False, server_default=text("'submitted'")),
     )
+    hidden_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
     created_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")),

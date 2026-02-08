@@ -49,7 +49,6 @@ class DealPlacementType(str, Enum):
 class Deal(SQLModel, table=True):
     __tablename__ = "deals"
     __table_args__ = (
-        UniqueConstraint("campaign_id", name="ux_deals_campaign_id"),
         UniqueConstraint("campaign_application_id", name="ux_deals_campaign_application_id"),
         CheckConstraint(
             "(source_type = 'listing' AND listing_id IS NOT NULL AND listing_format_id IS NOT NULL "

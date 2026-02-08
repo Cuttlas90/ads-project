@@ -72,10 +72,19 @@ def _auth_headers(user_id: int) -> dict[str, str]:
     return {"X-Telegram-Init-Data": init_data}
 
 
-def _create_campaign(client: TestClient, *, user_id: int, title: str = "Title") -> int:
+def _create_campaign(
+    client: TestClient,
+    *,
+    user_id: int,
+    title: str = "Title",
+    max_acceptances: int | None = None,
+) -> int:
+    payload: dict[str, object] = {"title": title, "brief": "Brief"}
+    if max_acceptances is not None:
+        payload["max_acceptances"] = max_acceptances
     response = client.post(
         "/campaigns",
-        json={"title": title, "brief": "Brief"},
+        json=payload,
         headers=_auth_headers(user_id),
     )
     assert response.status_code == 201
@@ -126,11 +135,26 @@ def test_create_campaign_success(client: TestClient, db_engine) -> None:
     assert payload["title"] == "Launch"
     assert payload["brief"] == "Details"
     assert payload["is_active"] is True
+    assert payload["lifecycle_state"] == "active"
+    assert payload["max_acceptances"] == 10
+    assert payload["hidden_at"] is None
 
     with Session(db_engine) as session:
         campaign = session.exec(select(CampaignRequest)).one()
         user = session.exec(select(User).where(User.telegram_user_id == 123)).one()
         assert campaign.advertiser_id == user.id
+        assert campaign.lifecycle_state == "active"
+        assert campaign.max_acceptances == 10
+
+
+def test_invalid_max_acceptances_rejected(client: TestClient) -> None:
+    response = client.post(
+        "/campaigns",
+        json={"title": "Launch", "brief": "Details", "max_acceptances": 0},
+        headers=_auth_headers(123),
+    )
+
+    assert response.status_code == 400
 
 
 def test_list_campaigns_returns_only_mine(client: TestClient) -> None:
@@ -144,6 +168,114 @@ def test_list_campaigns_returns_only_mine(client: TestClient) -> None:
     assert payload["total"] == 1
     assert len(payload["items"]) == 1
     assert payload["items"][0]["title"] == "Mine"
+
+
+def test_owner_discover_campaigns_filters_by_active_and_search(client: TestClient, db_engine) -> None:
+    matching_campaign_id = _create_campaign(client, user_id=123, title="Summer Launch")
+    _create_campaign(client, user_id=456, title="Winter Campaign")
+    hidden_campaign_id = _create_campaign(client, user_id=789, title="Summer Hidden")
+    closed_campaign_id = _create_campaign(client, user_id=999, title="Summer Closed")
+
+    hidden_response = client.delete(f"/campaigns/{hidden_campaign_id}", headers=_auth_headers(789))
+    assert hidden_response.status_code == 204
+
+    with Session(db_engine) as session:
+        closed_campaign = session.exec(
+            select(CampaignRequest).where(CampaignRequest.id == closed_campaign_id)
+        ).one()
+        closed_campaign.lifecycle_state = "closed_by_limit"
+        closed_campaign.is_active = False
+        session.add(closed_campaign)
+        session.commit()
+
+    response = client.get("/campaigns/discover?search=Summer", headers=_auth_headers(456))
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload["total"] == 1
+    assert len(payload["items"]) == 1
+    item = payload["items"][0]
+    assert item["id"] == matching_campaign_id
+    assert item["title"] == "Summer Launch"
+    assert item["advertiser_id"] > 0
+    assert item["max_acceptances"] == 10
+    assert "budget_ton" in item
+    assert "min_subscribers" in item
+    assert "min_avg_views" in item
+
+
+def test_advertiser_offers_inbox_scoped_sorted_and_excludes_hidden(
+    client: TestClient, db_engine
+) -> None:
+    advertiser_campaign_id = _create_campaign(client, user_id=123, title="Visible Campaign")
+    hidden_campaign_id = _create_campaign(client, user_id=123, title="Hidden Campaign")
+    other_advertiser_campaign_id = _create_campaign(client, user_id=999, title="Other Advertiser")
+
+    channel_a = _create_channel(client, owner_id=456, username="@offers_a")
+    channel_b = _create_channel(client, owner_id=789, username="@offers_b")
+    channel_c = _create_channel(client, owner_id=987, username="@offers_c")
+    channel_d = _create_channel(client, owner_id=654, username="@offers_d")
+    _mark_channel_verified(db_engine, channel_a)
+    _mark_channel_verified(db_engine, channel_b)
+    _mark_channel_verified(db_engine, channel_c)
+    _mark_channel_verified(db_engine, channel_d)
+
+    visible_old = client.post(
+        f"/campaigns/{advertiser_campaign_id}/apply",
+        json={"channel_id": channel_a, "proposed_format_label": "Post"},
+        headers=_auth_headers(456),
+    )
+    visible_new = client.post(
+        f"/campaigns/{advertiser_campaign_id}/apply",
+        json={"channel_id": channel_b, "proposed_format_label": "Story"},
+        headers=_auth_headers(789),
+    )
+    hidden_offer = client.post(
+        f"/campaigns/{advertiser_campaign_id}/apply",
+        json={"channel_id": channel_c, "proposed_format_label": "Post"},
+        headers=_auth_headers(987),
+    )
+    hidden_campaign_offer = client.post(
+        f"/campaigns/{hidden_campaign_id}/apply",
+        json={"channel_id": channel_d, "proposed_format_label": "Story"},
+        headers=_auth_headers(654),
+    )
+    other_advertiser_offer = client.post(
+        f"/campaigns/{other_advertiser_campaign_id}/apply",
+        json={"channel_id": channel_a, "proposed_format_label": "Post"},
+        headers=_auth_headers(456),
+    )
+    assert visible_old.status_code == 201
+    assert visible_new.status_code == 201
+    assert hidden_offer.status_code == 201
+    assert hidden_campaign_offer.status_code == 201
+    assert other_advertiser_offer.status_code == 201
+
+    hidden_offer_id = hidden_offer.json()["id"]
+    with Session(db_engine) as session:
+        offer = session.exec(select(CampaignApplication).where(CampaignApplication.id == hidden_offer_id)).one()
+        offer.hidden_at = datetime.now(timezone.utc)
+        session.add(offer)
+        session.commit()
+
+    hide_campaign_response = client.delete(f"/campaigns/{hidden_campaign_id}", headers=_auth_headers(123))
+    assert hide_campaign_response.status_code == 204
+
+    advertiser_response = client.get("/campaigns/offers", headers=_auth_headers(123))
+    assert advertiser_response.status_code == 200
+    advertiser_payload = advertiser_response.json()
+    assert advertiser_payload["total"] == 2
+    assert [item["application_id"] for item in advertiser_payload["items"]] == [
+        visible_new.json()["id"],
+        visible_old.json()["id"],
+    ]
+    assert all(item["campaign_id"] == advertiser_campaign_id for item in advertiser_payload["items"])
+
+    other_advertiser_response = client.get("/campaigns/offers", headers=_auth_headers(999))
+    assert other_advertiser_response.status_code == 200
+    other_payload = other_advertiser_response.json()
+    assert other_payload["total"] == 1
+    assert other_payload["items"][0]["campaign_id"] == other_advertiser_campaign_id
 
 
 def test_view_campaign_success(client: TestClient) -> None:
@@ -163,6 +295,76 @@ def test_view_campaign_not_mine_forbidden(client: TestClient) -> None:
     response = client.get(f"/campaigns/{campaign_id}", headers=_auth_headers(456))
 
     assert response.status_code == 403
+
+
+def test_delete_campaign_soft_hides_and_is_idempotent(client: TestClient, db_engine) -> None:
+    campaign_id = _create_campaign(client, user_id=123, title="ToHide")
+
+    response = client.delete(f"/campaigns/{campaign_id}", headers=_auth_headers(123))
+    assert response.status_code == 204
+
+    response = client.delete(f"/campaigns/{campaign_id}", headers=_auth_headers(123))
+    assert response.status_code == 204
+
+    response = client.get(f"/campaigns/{campaign_id}", headers=_auth_headers(123))
+    assert response.status_code == 404
+
+    response = client.get("/campaigns", headers=_auth_headers(123))
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 0
+    assert payload["items"] == []
+
+    with Session(db_engine) as session:
+        campaign = session.exec(select(CampaignRequest).where(CampaignRequest.id == campaign_id)).one()
+        assert campaign.lifecycle_state == "hidden"
+        assert campaign.is_active is False
+        assert campaign.hidden_at is not None
+
+
+def test_delete_campaign_cascades_hide_to_related_offers(client: TestClient, db_engine) -> None:
+    campaign_id = _create_campaign(client, user_id=123, title="Cascade")
+    channel_id = _create_channel(client, owner_id=456, username="@cascadeowner")
+    _mark_channel_verified(db_engine, channel_id)
+
+    apply_response = client.post(
+        f"/campaigns/{campaign_id}/apply",
+        json={"channel_id": channel_id, "proposed_format_label": "Post"},
+        headers=_auth_headers(456),
+    )
+    assert apply_response.status_code == 201
+    application_id = apply_response.json()["id"]
+
+    delete_response = client.delete(f"/campaigns/{campaign_id}", headers=_auth_headers(123))
+    assert delete_response.status_code == 204
+
+    applications_response = client.get(
+        f"/campaigns/{campaign_id}/applications",
+        headers=_auth_headers(123),
+    )
+    assert applications_response.status_code == 404
+
+    with Session(db_engine) as session:
+        application = session.exec(
+            select(CampaignApplication).where(CampaignApplication.id == application_id)
+        ).one()
+        assert application.hidden_at is not None
+
+
+def test_hidden_campaign_cannot_receive_applications(client: TestClient, db_engine) -> None:
+    campaign_id = _create_campaign(client, user_id=123, title="HideThenApply")
+    channel_id = _create_channel(client, owner_id=456, username="@hideapply")
+    _mark_channel_verified(db_engine, channel_id)
+
+    delete_response = client.delete(f"/campaigns/{campaign_id}", headers=_auth_headers(123))
+    assert delete_response.status_code == 204
+
+    response = client.post(
+        f"/campaigns/{campaign_id}/apply",
+        json={"channel_id": channel_id, "proposed_format_label": "Post"},
+        headers=_auth_headers(456),
+    )
+    assert response.status_code == 404
 
 
 def test_invalid_dates_rejected(client: TestClient) -> None:
@@ -295,3 +497,130 @@ def test_duplicate_apply_conflict(client: TestClient, db_engine) -> None:
     with Session(db_engine) as session:
         applications = session.exec(select(CampaignApplication)).all()
         assert len(applications) == 1
+
+
+def test_closed_by_limit_blocks_future_applications(client: TestClient, db_engine) -> None:
+    campaign_id = _create_campaign(client, user_id=123, max_acceptances=1)
+    first_channel_id = _create_channel(client, owner_id=456, username="@limitfirst")
+    second_channel_id = _create_channel(client, owner_id=789, username="@limitsecond")
+    _mark_channel_verified(db_engine, first_channel_id)
+    _mark_channel_verified(db_engine, second_channel_id)
+
+    first_apply = client.post(
+        f"/campaigns/{campaign_id}/apply",
+        json={"channel_id": first_channel_id, "proposed_format_label": "Post"},
+        headers=_auth_headers(456),
+    )
+    assert first_apply.status_code == 201
+    first_application_id = first_apply.json()["id"]
+
+    accept_response = client.post(
+        f"/campaigns/{campaign_id}/applications/{first_application_id}/accept",
+        json={
+            "price_ton": "15.00",
+            "ad_type": "Post",
+            "creative_text": "Campaign",
+            "creative_media_type": "video",
+            "creative_media_ref": "video-ref",
+        },
+        headers=_auth_headers(123),
+    )
+    assert accept_response.status_code == 201
+
+    blocked_apply = client.post(
+        f"/campaigns/{campaign_id}/apply",
+        json={"channel_id": second_channel_id, "proposed_format_label": "Post"},
+        headers=_auth_headers(789),
+    )
+    assert blocked_apply.status_code == 404
+
+    with Session(db_engine) as session:
+        campaign = session.exec(select(CampaignRequest).where(CampaignRequest.id == campaign_id)).one()
+        assert campaign.lifecycle_state == "closed_by_limit"
+        assert campaign.is_active is False
+
+
+def test_limit_reach_auto_rejects_remaining_submitted_offers(client: TestClient, db_engine) -> None:
+    campaign_id = _create_campaign(client, user_id=123, max_acceptances=1)
+    first_channel_id = _create_channel(client, owner_id=456, username="@autoreject1")
+    second_channel_id = _create_channel(client, owner_id=789, username="@autoreject2")
+    _mark_channel_verified(db_engine, first_channel_id)
+    _mark_channel_verified(db_engine, second_channel_id)
+
+    first_apply = client.post(
+        f"/campaigns/{campaign_id}/apply",
+        json={"channel_id": first_channel_id, "proposed_format_label": "Post"},
+        headers=_auth_headers(456),
+    )
+    assert first_apply.status_code == 201
+    first_application_id = first_apply.json()["id"]
+
+    second_apply = client.post(
+        f"/campaigns/{campaign_id}/apply",
+        json={"channel_id": second_channel_id, "proposed_format_label": "Post"},
+        headers=_auth_headers(789),
+    )
+    assert second_apply.status_code == 201
+    second_application_id = second_apply.json()["id"]
+
+    accept_response = client.post(
+        f"/campaigns/{campaign_id}/applications/{first_application_id}/accept",
+        json={
+            "price_ton": "15.00",
+            "ad_type": "Post",
+            "creative_text": "Campaign",
+            "creative_media_type": "video",
+            "creative_media_ref": "video-ref",
+        },
+        headers=_auth_headers(123),
+    )
+    assert accept_response.status_code == 201
+
+    with Session(db_engine) as session:
+        first_application = session.exec(
+            select(CampaignApplication).where(CampaignApplication.id == first_application_id)
+        ).one()
+        second_application = session.exec(
+            select(CampaignApplication).where(CampaignApplication.id == second_application_id)
+        ).one()
+        assert first_application.status == "accepted"
+        assert second_application.status == "rejected"
+
+
+def test_hidden_offers_are_excluded_from_offer_listing(client: TestClient, db_engine) -> None:
+    campaign_id = _create_campaign(client, user_id=123)
+    first_channel_id = _create_channel(client, owner_id=456, username="@hiddenoffer1")
+    second_channel_id = _create_channel(client, owner_id=789, username="@hiddenoffer2")
+    _mark_channel_verified(db_engine, first_channel_id)
+    _mark_channel_verified(db_engine, second_channel_id)
+
+    first_apply = client.post(
+        f"/campaigns/{campaign_id}/apply",
+        json={"channel_id": first_channel_id, "proposed_format_label": "Post"},
+        headers=_auth_headers(456),
+    )
+    second_apply = client.post(
+        f"/campaigns/{campaign_id}/apply",
+        json={"channel_id": second_channel_id, "proposed_format_label": "Story"},
+        headers=_auth_headers(789),
+    )
+    assert first_apply.status_code == 201
+    assert second_apply.status_code == 201
+    hidden_application_id = second_apply.json()["id"]
+
+    with Session(db_engine) as session:
+        application = session.exec(
+            select(CampaignApplication).where(CampaignApplication.id == hidden_application_id)
+        ).one()
+        application.hidden_at = datetime.now(timezone.utc)
+        session.add(application)
+        session.commit()
+
+    response = client.get(
+        f"/campaigns/{campaign_id}/applications",
+        headers=_auth_headers(123),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert len(payload["items"]) == 1

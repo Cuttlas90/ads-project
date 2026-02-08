@@ -1,6 +1,86 @@
 export type RolePreference = 'owner' | 'advertiser'
 export type PlacementType = 'post' | 'story'
 
+export interface CampaignSummary {
+  id: number
+  advertiser_id: number
+  title: string
+  brief: string
+  budget_usdt?: string | null
+  budget_ton?: string | null
+  preferred_language?: string | null
+  start_at?: string | null
+  end_at?: string | null
+  min_subscribers?: number | null
+  min_avg_views?: number | null
+  lifecycle_state: string
+  max_acceptances: number
+  hidden_at?: string | null
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface CampaignPage {
+  page: number
+  page_size: number
+  total: number
+  items: CampaignSummary[]
+}
+
+export interface CampaignDiscoverItem {
+  id: number
+  advertiser_id: number
+  title: string
+  brief: string
+  budget_ton?: string | null
+  preferred_language?: string | null
+  min_subscribers?: number | null
+  min_avg_views?: number | null
+  max_acceptances: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CampaignDiscoverPage {
+  page: number
+  page_size: number
+  total: number
+  items: CampaignDiscoverItem[]
+}
+
+export interface CampaignOfferInboxItem {
+  application_id: number
+  campaign_id: number
+  campaign_title: string
+  channel_id: number
+  channel_username?: string | null
+  channel_title?: string | null
+  owner_id: number
+  proposed_format_label: string
+  status: string
+  created_at: string
+}
+
+export interface CampaignOfferInboxPage {
+  page: number
+  page_size: number
+  total: number
+  items: CampaignOfferInboxItem[]
+}
+
+export interface CampaignApplicationSummary {
+  id: number
+  campaign_id: number
+  channel_id: number
+  owner_id: number
+  proposed_format_label: string
+  message?: string | null
+  status: string
+  hidden_at?: string | null
+  created_at: string
+}
+
 export interface AuthMeResponse {
   id: number
   telegram_user_id: number

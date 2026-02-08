@@ -26,6 +26,9 @@ const buildHeaders = (body?: BodyInit | null) => {
 
 const handleResponse = async <T>(response: Response): Promise<T> => {
   if (response.ok) {
+    if (response.status === 204) {
+      return undefined as T
+    }
     return response.json() as Promise<T>
   }
   let message = `Request failed (${response.status})`
@@ -71,6 +74,13 @@ export const api = {
       method: 'PATCH',
       headers: buildHeaders(payload ?? null),
       body: payload,
+    })
+    return handleResponse<T>(response)
+  },
+  async delete<T>(path: string): Promise<T> {
+    const response = await fetch(`${API_BASE}${path}`, {
+      method: 'DELETE',
+      headers: buildHeaders(),
     })
     return handleResponse<T>(response)
   },

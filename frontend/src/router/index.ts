@@ -3,6 +3,7 @@ import type { RouteRecordRaw } from 'vue-router'
 
 import { useAuthStore } from '../stores/auth'
 import OwnerHomeView from '../views/OwnerHomeView.vue'
+import OwnerCampaignsView from '../views/OwnerCampaignsView.vue'
 import DealDetailView from '../views/DealDetailView.vue'
 import ChannelVerifyView from '../views/ChannelVerifyView.vue'
 import ListingEditorView from '../views/ListingEditorView.vue'
@@ -10,6 +11,7 @@ import OwnerDealsView from '../views/OwnerDealsView.vue'
 import OwnerCreativeSubmitView from '../views/OwnerCreativeSubmitView.vue'
 import MarketplaceView from '../views/MarketplaceView.vue'
 import CampaignCreateView from '../views/CampaignCreateView.vue'
+import AdvertiserOffersView from '../views/AdvertiserOffersView.vue'
 import AdvertiserDealsView from '../views/AdvertiserDealsView.vue'
 import AdvertiserCreativeReviewView from '../views/AdvertiserCreativeReviewView.vue'
 import FundingView from '../views/FundingView.vue'
@@ -54,6 +56,12 @@ const routes: RouteRecordRaw[] = [
     component: ListingEditorView,
     meta: routeMeta('owner'),
   },
+  {
+    path: '/owner/campaigns',
+    name: 'owner-campaigns',
+    component: OwnerCampaignsView,
+    meta: routeMeta('owner'),
+  },
   { path: '/owner/deals', name: 'owner-deals', component: OwnerDealsView, meta: routeMeta('owner') },
   {
     path: '/owner/deals/:id/creative',
@@ -77,6 +85,12 @@ const routes: RouteRecordRaw[] = [
     path: '/advertiser/campaigns/new',
     name: 'campaign-create',
     component: CampaignCreateView,
+    meta: routeMeta('advertiser'),
+  },
+  {
+    path: '/advertiser/offers',
+    name: 'advertiser-offers',
+    component: AdvertiserOffersView,
     meta: routeMeta('advertiser'),
   },
   {

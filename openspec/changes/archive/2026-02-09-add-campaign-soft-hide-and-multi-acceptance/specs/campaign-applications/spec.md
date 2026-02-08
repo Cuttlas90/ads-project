@@ -1,8 +1,5 @@
-# campaign-applications Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-campaign-requests. Update Purpose after archive.
-## Requirements
 ### Requirement: Campaign application persistence
 The system SHALL persist campaign applications in a `campaign_applications` table with fields `id`, `campaign_id` (FK to `campaign_requests.id`), `channel_id` (FK to `channels.id`), `owner_id` (FK to `users.id`), `proposed_format_label` (required), `message` (nullable), `status` (required, default `submitted`), `hidden_at` (nullable timestamp), and `created_at`. It SHALL enforce unique `(campaign_id, channel_id)` and SHALL index `campaign_id`, `owner_id`, and `channel_id`. Allowed `status` values are `submitted`, `withdrawn`, `accepted`, and `rejected`.
 
@@ -28,13 +25,11 @@ The system SHALL expose `POST /campaigns/{campaign_id}/apply` requiring authenti
 ### Requirement: List campaign applications endpoint
 The system SHALL expose `GET /campaigns/{campaign_id}/applications` requiring authentication. It SHALL allow access only to the campaign’s `advertiser_id`, returning HTTP 403 otherwise and HTTP 404 when the campaign does not exist or is hidden. It SHALL return only non-hidden applications (`hidden_at IS NULL`) in a paginated response with `page`, `page_size`, `total`, and `items`. Each item SHALL include `id`, `channel_id`, `channel_username`, `channel_title`, `proposed_format_label`, `status`, `created_at`, and a stats summary with `avg_views`, `premium_ratio`, and `language_stats` (top language only). It SHALL source stats from the latest `channel_stats_snapshots` for each channel; `premium_ratio` is derived from `premium_stats.premium_ratio` (default `0.0` when missing), and `language_stats` is either `null` or a single-entry map of the highest-ratio language code to its ratio.
 
-#### Scenario: Advertiser reviews applicants
-- **WHEN** an advertiser lists applications for their campaign
-- **THEN** the response includes applicant channel metadata and stats summary
-
 #### Scenario: Hidden offers excluded from advertiser offer page
 - **WHEN** the advertiser lists applications for a campaign after some offers were soft-hidden
 - **THEN** hidden offers are excluded from `items` and from `total`
+
+## ADDED Requirements
 
 ### Requirement: Campaign hide cascades to related offers
 When a campaign is soft-hidden, the system SHALL soft-hide all related campaign applications in the same transaction by setting `hidden_at`. Campaign/offer pages SHALL stop showing those offers after the transaction commits. Accepted offers that already created deals SHALL remain visible through deal detail and deal history endpoints.
@@ -49,24 +44,3 @@ When an application acceptance causes the campaign accepted count to reach `max_
 #### Scenario: Reaching limit rejects remaining submitted offers
 - **WHEN** an acceptance causes accepted count to equal `max_acceptances`
 - **THEN** all remaining `submitted` offers for that campaign are transitioned to `rejected`
-
-### Requirement: Advertiser aggregated offers inbox endpoint
-The system SHALL expose `GET /campaigns/offers` requiring authentication. It SHALL return offers (`campaign_applications`) for campaigns owned by the authenticated advertiser across all their campaigns in a single paginated response. It SHALL exclude offers with `hidden_at` set and offers whose campaigns are hidden.
-
-#### Scenario: Advertiser sees one cross-campaign offer inbox
-- **WHEN** an advertiser requests `GET /campaigns/offers`
-- **THEN** the response includes offers from all campaigns owned by that advertiser, excluding hidden records
-
-### Requirement: Aggregated offers sorting and payload
-`GET /campaigns/offers` SHALL return items sorted by newest offer first (`created_at DESC`, deterministic tie-break by `id DESC`). Each item SHALL include `application_id`, `campaign_id`, `campaign_title`, `channel_id`, `channel_username`, `channel_title`, `owner_id`, `proposed_format_label`, `status`, and `created_at`.
-
-#### Scenario: Offers inbox is newest-first
-- **WHEN** an advertiser loads the aggregated offers inbox
-- **THEN** offers are ordered by most recent `created_at` first
-
-### Requirement: Multi-channel owner apply behavior
-The system SHALL allow the same owner to apply to the same campaign using different owned verified channels. It SHALL continue enforcing uniqueness only for `(campaign_id, channel_id)` pairs.
-
-#### Scenario: Owner applies from two owned verified channels
-- **WHEN** an owner submits applications for one campaign using two distinct owned verified channels
-- **THEN** both applications are accepted as long as each `(campaign_id, channel_id)` pair is unique

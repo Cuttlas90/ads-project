@@ -6,6 +6,7 @@
         <RouterLink class="home__link" to="/advertiser/campaigns/new"
           >Create campaign request</RouterLink
         >
+        <RouterLink class="home__link" to="/advertiser/offers">Review offers</RouterLink>
         <RouterLink class="home__link" to="/advertiser/deals">View deals inbox</RouterLink>
       </div>
     </TgCard>

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, func
 from sqlalchemy.exc import IntegrityError
@@ -7,7 +9,7 @@ from sqlmodel import Session, select
 
 from app.api.deps import get_current_user, get_db
 from app.models.campaign_application import CampaignApplication
-from app.models.campaign_request import CampaignRequest
+from app.models.campaign_request import CampaignLifecycleState, CampaignRequest
 from app.models.channel import Channel
 from app.models.channel_member import ChannelMember
 from app.models.channel_stats_snapshot import ChannelStatsSnapshot
@@ -159,8 +161,13 @@ def _application_summary(application: CampaignApplication) -> CampaignApplicatio
         proposed_format_label=application.proposed_format_label,
         message=application.message,
         status=application.status,
+        hidden_at=application.hidden_at,
         created_at=application.created_at,
     )
+
+
+def _count_result(value: int | tuple[int]) -> int:
+    return value if isinstance(value, int) else value[0]
 
 
 @router.post("/{campaign_id}/apply", response_model=CampaignApplicationSummary, status_code=status.HTTP_201_CREATED)
@@ -176,8 +183,8 @@ def apply_to_campaign(
     campaign = db.exec(select(CampaignRequest).where(CampaignRequest.id == campaign_id)).first()
     if campaign is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
-    if not campaign.is_active:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Campaign is inactive")
+    if campaign.lifecycle_state != CampaignLifecycleState.ACTIVE.value:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
 
     channel = db.exec(select(Channel).where(Channel.id == payload.channel_id)).first()
     if channel is None:
@@ -223,7 +230,11 @@ def list_campaign_applications(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> CampaignApplicationPage:
-    campaign = db.exec(select(CampaignRequest).where(CampaignRequest.id == campaign_id)).first()
+    campaign = db.exec(
+        select(CampaignRequest)
+        .where(CampaignRequest.id == campaign_id)
+        .where(CampaignRequest.lifecycle_state != CampaignLifecycleState.HIDDEN.value)
+    ).first()
     if campaign is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
     if campaign.advertiser_id != current_user.id:
@@ -253,6 +264,7 @@ def list_campaign_applications(
             isouter=True,
         )
         .where(CampaignApplication.campaign_id == campaign_id)
+        .where(CampaignApplication.hidden_at.is_(None))
     )
 
     total_stmt = select(func.count()).select_from(stmt.subquery())
@@ -306,26 +318,62 @@ def accept_campaign_application(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> DealSummary:
-    campaign = db.exec(select(CampaignRequest).where(CampaignRequest.id == campaign_id)).first()
+    campaign = db.exec(
+        select(CampaignRequest).where(CampaignRequest.id == campaign_id).with_for_update()
+    ).first()
     if campaign is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+    if campaign.lifecycle_state == CampaignLifecycleState.HIDDEN.value:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+    if campaign.lifecycle_state == CampaignLifecycleState.CLOSED_BY_LIMIT.value:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Campaign acceptance limit reached")
     if campaign.advertiser_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
 
-    application = db.exec(select(CampaignApplication).where(CampaignApplication.id == application_id)).first()
-    if application is None or application.campaign_id != campaign_id:
+    application = db.exec(
+        select(CampaignApplication)
+        .where(CampaignApplication.id == application_id)
+        .with_for_update()
+    ).first()
+    if (
+        application is None
+        or application.campaign_id != campaign_id
+        or application.hidden_at is not None
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
     if application.status != "submitted":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Application is not submitted")
 
-    existing_campaign = db.exec(select(Deal).where(Deal.campaign_id == campaign_id)).first()
-    if existing_campaign is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Deal already exists")
     existing_application = db.exec(
         select(Deal).where(Deal.campaign_application_id == application_id)
     ).first()
     if existing_application is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Deal already exists")
+
+    accepted_count_result = db.exec(
+        select(func.count()).select_from(Deal).where(Deal.campaign_id == campaign_id)
+    ).one()
+    accepted_count = _count_result(accepted_count_result)
+    if accepted_count >= campaign.max_acceptances:
+        if campaign.lifecycle_state != CampaignLifecycleState.CLOSED_BY_LIMIT.value:
+            now = datetime.now(timezone.utc)
+            campaign.lifecycle_state = CampaignLifecycleState.CLOSED_BY_LIMIT.value
+            campaign.is_active = False
+            campaign.updated_at = now
+            db.add(campaign)
+            remaining_submitted = db.exec(
+                select(CampaignApplication)
+                .where(CampaignApplication.campaign_id == campaign.id)
+                .where(CampaignApplication.status == "submitted")
+                .where(CampaignApplication.hidden_at.is_(None))
+            ).all()
+            for offer in remaining_submitted:
+                offer.status = "rejected"
+                if offer.message is None:
+                    offer.message = "closed_by_limit"
+                db.add(offer)
+            db.commit()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Campaign acceptance limit reached")
 
     price_ton = payload.price_ton
     if price_ton is None or price_ton < 0:
@@ -370,6 +418,27 @@ def accept_campaign_application(
         },
     )
     db.add(proposal_event)
+
+    accepted_count_after = accepted_count + 1
+    if accepted_count_after >= campaign.max_acceptances:
+        now = datetime.now(timezone.utc)
+        campaign.lifecycle_state = CampaignLifecycleState.CLOSED_BY_LIMIT.value
+        campaign.is_active = False
+        campaign.updated_at = now
+        db.add(campaign)
+
+        remaining_submitted = db.exec(
+            select(CampaignApplication)
+            .where(CampaignApplication.campaign_id == campaign.id)
+            .where(CampaignApplication.status == "submitted")
+            .where(CampaignApplication.id != application.id)
+            .where(CampaignApplication.hidden_at.is_(None))
+        ).all()
+        for offer in remaining_submitted:
+            offer.status = "rejected"
+            if offer.message is None:
+                offer.message = "closed_by_limit"
+            db.add(offer)
 
     try:
         db.commit()
