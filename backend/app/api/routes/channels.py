@@ -11,6 +11,7 @@ from app.domain.channel_verification import (
     ChannelAccessDenied,
     ChannelBotPermissionDenied,
     ChannelNotFound,
+    ChannelVerificationError,
 )
 from app.models.channel import Channel
 from app.models.channel_member import ChannelMember
@@ -21,7 +22,7 @@ from app.schemas.channel import ChannelCreate, ChannelRole, ChannelSummary, Chan
 from app.schemas.listing import ChannelListingResponse, ListingDetail, ListingFormatSummary
 from app.services.channel_verify import verify_channel
 from app.settings import Settings
-from shared.telegram import TelegramClientService
+from shared.telegram import BotApiService, TelegramClientService
 
 router = APIRouter(prefix="/channels", tags=["channels"])
 
@@ -181,17 +182,21 @@ async def verify_channel_endpoint(
     settings: Settings = Depends(get_settings_dep),
 ) -> ChannelSummary:
     telegram_client = TelegramClientService(settings)
+    bot_api = BotApiService(settings)
     try:
         channel = await verify_channel(
             channel_id=channel_id,
             user=current_user,
             db=db,
             telegram_client=telegram_client,
+            bot_api=bot_api,
         )
     except ChannelNotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except (ChannelAccessDenied, ChannelBotPermissionDenied) as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ChannelVerificationError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     return ChannelSummary(
         id=channel.id,

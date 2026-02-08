@@ -27,6 +27,24 @@ class BotApiService:
             )
         return response.json()
 
+    def get_me(self) -> dict:
+        payload = self._post("getMe", {})
+        if not payload.get("ok"):
+            raise TelegramApiError(f"Bot API error: {payload}")
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            raise TelegramApiError("Bot API response missing getMe result")
+        return result
+
+    def get_chat_member(self, *, chat_id: int | str, user_id: int) -> dict:
+        payload = self._post("getChatMember", {"chat_id": chat_id, "user_id": user_id})
+        if not payload.get("ok"):
+            raise TelegramApiError(f"Bot API error: {payload}")
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            raise TelegramApiError("Bot API response missing getChatMember result")
+        return result
+
     def send_message(
         self,
         chat_id: int | str,

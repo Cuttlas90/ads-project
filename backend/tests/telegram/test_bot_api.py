@@ -67,6 +67,44 @@ def test_send_message_error(monkeypatch) -> None:
         service.send_message(chat_id=1, text="fail")
 
 
+def test_get_me_success(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, json: dict) -> DummyResponse:
+        captured["url"] = url
+        captured["json"] = json
+        return DummyResponse(200, {"ok": True, "result": {"id": 999, "username": "bot"}})
+
+    monkeypatch.setattr(bot_api.httpx, "post", fake_post)
+
+    settings = Settings(_env_file=None, TELEGRAM_ENABLED=True, TELEGRAM_BOT_TOKEN="token")
+    service = BotApiService(settings)
+
+    result = service.get_me()
+    assert result["id"] == 999
+    assert captured["url"] == "https://api.telegram.org/bottoken/getMe"
+    assert captured["json"] == {}
+
+
+def test_get_chat_member_success(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, json: dict) -> DummyResponse:
+        captured["url"] = url
+        captured["json"] = json
+        return DummyResponse(200, {"ok": True, "result": {"status": "administrator"}})
+
+    monkeypatch.setattr(bot_api.httpx, "post", fake_post)
+
+    settings = Settings(_env_file=None, TELEGRAM_ENABLED=True, TELEGRAM_BOT_TOKEN="token")
+    service = BotApiService(settings)
+
+    result = service.get_chat_member(chat_id="@chan", user_id=999)
+    assert result["status"] == "administrator"
+    assert captured["url"] == "https://api.telegram.org/bottoken/getChatMember"
+    assert captured["json"] == {"chat_id": "@chan", "user_id": 999}
+
+
 def test_bot_api_disabled(monkeypatch) -> None:
     def fake_post(*args, **kwargs) -> DummyResponse:
         raise AssertionError("httpx.post should not be called")

@@ -15,6 +15,7 @@ from sqlmodel import Session, select
 import app.api.routes.channels as channels_route
 import app.services.channel_verify as channel_verify_service
 from app.api.deps import get_db, get_settings_dep
+from app.domain.channel_verification import ChannelVerificationError
 from app.main import app
 from app.models.channel import Channel
 from app.models.channel_stats_snapshot import ChannelStatsSnapshot
@@ -131,12 +132,22 @@ class DummyStatsResponse:
 
 
 class DummyTelethonClient:
-    def __init__(self, full_response: DummyFullResponse, stats_response: DummyStatsResponse) -> None:
+    def __init__(
+        self,
+        full_response: DummyFullResponse,
+        stats_response: DummyStatsResponse,
+        *,
+        authorized: bool = True,
+    ) -> None:
         self._full_response = full_response
         self._stats_response = stats_response
+        self._authorized = authorized
 
     async def get_input_entity(self, channel):
         return channel
+
+    async def is_user_authorized(self) -> bool:
+        return self._authorized
 
     async def __call__(self, request):
         name = request.__class__.__name__
@@ -147,8 +158,14 @@ class DummyTelethonClient:
         raise AssertionError(f"Unexpected request: {name}")
 
 
-def _patch_telegram(monkeypatch, full_response: DummyFullResponse, stats_response: DummyStatsResponse):
-    dummy_client = DummyTelethonClient(full_response, stats_response)
+def _patch_telegram(
+    monkeypatch,
+    full_response: DummyFullResponse,
+    stats_response: DummyStatsResponse,
+    *,
+    authorized: bool = True,
+):
+    dummy_client = DummyTelethonClient(full_response, stats_response, authorized=authorized)
 
     class DummyService:
         def __init__(self, _settings) -> None:
@@ -168,12 +185,14 @@ def _patch_telegram(monkeypatch, full_response: DummyFullResponse, stats_respons
 
 
 def test_verify_channel_permission_denied(client: TestClient, db_engine, monkeypatch) -> None:
-    async def fake_check_bot_permissions(_client, _channel):
+    async def fake_check_bot_permissions(_bot_api, _channel):
         return PermissionCheckResult(
             ok=False,
             is_admin=False,
-            missing_permissions=["view_statistics"],
+            missing_permissions=["can_edit_messages"],
             present_permissions=[],
+            permission_details={"can_post_messages": True, "can_edit_messages": False},
+            raw_member={"status": "administrator"},
         )
 
     monkeypatch.setattr(channel_verify_service, "check_bot_permissions", fake_check_bot_permissions)
@@ -212,12 +231,23 @@ def test_verify_channel_permission_denied(client: TestClient, db_engine, monkeyp
 
 
 def test_verify_channel_success_creates_snapshot(client: TestClient, db_engine, monkeypatch) -> None:
-    async def fake_check_bot_permissions(_client, _channel):
+    async def fake_check_bot_permissions(_bot_api, _channel):
         return PermissionCheckResult(
             ok=True,
             is_admin=True,
             missing_permissions=[],
-            present_permissions=["post_messages"],
+            present_permissions=["can_edit_messages", "can_post_messages"],
+            permission_details={
+                "can_post_messages": True,
+                "can_edit_messages": True,
+                "can_manage_chat": True,
+            },
+            raw_member={
+                "status": "administrator",
+                "can_post_messages": True,
+                "can_edit_messages": True,
+                "can_manage_chat": True,
+            },
         )
 
     monkeypatch.setattr(channel_verify_service, "check_bot_permissions", fake_check_bot_permissions)
@@ -262,15 +292,19 @@ def test_verify_channel_success_creates_snapshot(client: TestClient, db_engine, 
         assert snapshot.subscribers == 111
         assert snapshot.avg_views == 222
         assert snapshot.raw_stats is not None
+        assert snapshot.raw_stats["bot_chat_member"]["status"] == "administrator"
+        assert snapshot.raw_stats["bot_permission_details"]["can_post_messages"] is True
 
 
 def test_verify_channel_requires_membership(client: TestClient, db_engine, monkeypatch) -> None:
-    async def fake_check_bot_permissions(_client, _channel):
+    async def fake_check_bot_permissions(_bot_api, _channel):
         return PermissionCheckResult(
             ok=True,
             is_admin=True,
             missing_permissions=[],
-            present_permissions=["post_messages"],
+            present_permissions=["can_post_messages", "can_edit_messages"],
+            permission_details={"can_post_messages": True, "can_edit_messages": True},
+            raw_member={"status": "administrator"},
         )
 
     monkeypatch.setattr(channel_verify_service, "check_bot_permissions", fake_check_bot_permissions)
@@ -304,3 +338,62 @@ def test_verify_channel_requires_membership(client: TestClient, db_engine, monke
             select(ChannelStatsSnapshot).where(ChannelStatsSnapshot.channel_id == channel_id)
         ).all()
         assert len(snapshots) == 0
+
+
+def test_verify_channel_telegram_failure_returns_502(client: TestClient, monkeypatch) -> None:
+    async def fake_verify_channel(**kwargs):
+        raise ChannelVerificationError(
+            "Failed to verify channel with Telegram",
+            channel_id=1,
+        )
+
+    monkeypatch.setattr(channels_route, "verify_channel", fake_verify_channel)
+
+    response = client.post(
+        "/channels/1/verify",
+        headers=_auth_headers(123),
+    )
+
+    assert response.status_code == 502
+    assert "Failed to verify channel with Telegram" in response.json()["detail"]
+
+
+def test_verify_channel_unauthorized_telethon_session_returns_502(
+    client: TestClient, monkeypatch
+) -> None:
+    async def fake_check_bot_permissions(_bot_api, _channel):
+        return PermissionCheckResult(
+            ok=True,
+            is_admin=True,
+            missing_permissions=[],
+            present_permissions=["can_edit_messages", "can_post_messages"],
+            permission_details={"can_post_messages": True, "can_edit_messages": True},
+            raw_member={"status": "administrator"},
+        )
+
+    monkeypatch.setattr(channel_verify_service, "check_bot_permissions", fake_check_bot_permissions)
+
+    full_response = DummyFullResponse(
+        full_chat=DummyFullChat(participants_count=111, id=999),
+        chats=[DummyChat(id=999, username="UpdatedName", title="Updated Title")],
+    )
+    stats_response = DummyStatsResponse(
+        views_per_post=DummyViewsPerPost(current=222),
+        languages_graph=DummyGraph(data={"en": 80}),
+    )
+    _patch_telegram(monkeypatch, full_response, stats_response, authorized=False)
+
+    created = client.post(
+        "/channels",
+        json={"username": "@examplechannel"},
+        headers=_auth_headers(123),
+    )
+    channel_id = created.json()["id"]
+
+    response = client.post(
+        f"/channels/{channel_id}/verify",
+        headers=_auth_headers(123),
+    )
+
+    assert response.status_code == 502
+    assert "not authorized" in response.json()["detail"].lower()

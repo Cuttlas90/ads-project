@@ -11,6 +11,26 @@ from app.telegram.permissions import (
 )
 
 
+class DummyBotApi:
+    def __init__(self, *, me_id: int = 999, member: dict | None = None, raise_error: bool = False) -> None:
+        self.me_id = me_id
+        self.member = member or {}
+        self.raise_error = raise_error
+        self.calls: list[tuple] = []
+
+    def get_me(self) -> dict:
+        self.calls.append(("get_me",))
+        if self.raise_error:
+            raise RuntimeError("boom")
+        return {"id": self.me_id}
+
+    def get_chat_member(self, *, chat_id, user_id: int) -> dict:
+        self.calls.append(("get_chat_member", chat_id, user_id))
+        if self.raise_error:
+            raise RuntimeError("boom")
+        return self.member
+
+
 class DummyAdminRights:
     def __init__(self, **rights: bool) -> None:
         for name, value in rights.items():
@@ -36,38 +56,75 @@ class DummyClient:
 
 
 def test_check_bot_permissions_not_admin() -> None:
-    client = DummyClient({"me": DummyParticipant(is_admin=False, admin_rights=None)})
+    bot_api = DummyBotApi(member={"status": "member"})
 
-    result = asyncio.run(check_bot_permissions(client, 123))
+    result = asyncio.run(check_bot_permissions(bot_api, 123))
 
     assert result.ok is False
     assert result.is_admin is False
     assert result.present_permissions == []
     assert result.missing_permissions == sorted(REQUIRED_BOT_RIGHTS)
+    assert result.raw_member == {"status": "member"}
 
 
 def test_check_bot_permissions_missing_rights() -> None:
-    rights = DummyAdminRights(post_messages=True, edit_messages=False, delete_messages=True, view_statistics=False)
-    client = DummyClient({"me": DummyParticipant(is_admin=True, admin_rights=rights)})
+    bot_api = DummyBotApi(
+        member={
+            "status": "administrator",
+            "can_post_messages": True,
+            "can_edit_messages": False,
+            "can_delete_messages": True,
+        }
+    )
 
-    result = asyncio.run(check_bot_permissions(client, 123))
+    result = asyncio.run(check_bot_permissions(bot_api, 123))
 
     assert result.ok is False
     assert result.is_admin is True
-    assert result.present_permissions == ["delete_messages", "post_messages"]
-    assert result.missing_permissions == ["edit_messages", "view_statistics"]
+    assert result.present_permissions == ["can_delete_messages", "can_post_messages"]
+    assert result.missing_permissions == [
+        "can_delete_stories",
+        "can_edit_messages",
+        "can_edit_stories",
+        "can_post_stories",
+    ]
+    assert result.permission_details is not None
+    assert result.permission_details["can_delete_messages"] is True
 
 
 def test_check_bot_permissions_full_rights() -> None:
-    rights = DummyAdminRights(**{right: True for right in REQUIRED_BOT_RIGHTS})
-    client = DummyClient({"me": DummyParticipant(is_admin=True, admin_rights=rights)})
+    bot_api = DummyBotApi(
+        member={
+            "status": "administrator",
+            "can_post_messages": True,
+            "can_edit_messages": True,
+            "can_delete_messages": True,
+            "can_post_stories": True,
+            "can_edit_stories": True,
+            "can_delete_stories": True,
+        }
+    )
 
-    result = asyncio.run(check_bot_permissions(client, 123))
+    result = asyncio.run(check_bot_permissions(bot_api, "channel"))
 
     assert result.ok is True
     assert result.is_admin is True
     assert result.missing_permissions == []
     assert result.present_permissions == sorted(REQUIRED_BOT_RIGHTS)
+    assert result.raw_member is not None
+    assert result.raw_member["status"] == "administrator"
+    assert bot_api.calls[-1] == ("get_chat_member", "@channel", 999)
+
+
+def test_check_bot_permissions_api_failure() -> None:
+    bot_api = DummyBotApi(raise_error=True)
+
+    result = asyncio.run(check_bot_permissions(bot_api, 123))
+
+    assert result.ok is False
+    assert result.is_admin is False
+    assert result.missing_permissions == sorted(REQUIRED_BOT_RIGHTS)
+    assert result.raw_member is None
 
 
 def test_check_user_permissions_not_member() -> None:

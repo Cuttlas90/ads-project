@@ -14,6 +14,9 @@ _ENV_KEYS = [
     "TELEGRAM_API_HASH",
     "TELEGRAM_ENABLED",
     "TELEGRAM_SESSION_NAME",
+    "TELEGRAM_MTPROXY_HOST",
+    "TELEGRAM_MTPROXY_PORT",
+    "TELEGRAM_MTPROXY_SECRET",
     "TELEGRAM_MEDIA_CHANNEL_ID",
     "CORS_ALLOW_ORIGINS",
 ]
@@ -37,6 +40,9 @@ def test_settings_defaults(monkeypatch) -> None:
     assert settings.TELEGRAM_API_HASH is None
     assert settings.TELEGRAM_ENABLED is True
     assert settings.TELEGRAM_SESSION_NAME == "tgads_backend"
+    assert settings.TELEGRAM_MTPROXY_HOST is None
+    assert settings.TELEGRAM_MTPROXY_PORT is None
+    assert settings.TELEGRAM_MTPROXY_SECRET is None
     assert settings.TELEGRAM_MEDIA_CHANNEL_ID is None
     assert settings.CORS_ALLOW_ORIGINS == [
         "http://localhost:5173",
@@ -58,6 +64,9 @@ def test_settings_overrides(monkeypatch) -> None:
         "TELEGRAM_API_HASH": "hash",
         "TELEGRAM_ENABLED": "false",
         "TELEGRAM_SESSION_NAME": "custom_session",
+        "TELEGRAM_MTPROXY_HOST": "91.239.192.223",
+        "TELEGRAM_MTPROXY_PORT": "15",
+        "TELEGRAM_MTPROXY_SECRET": "ee1603010200010001fc030386e24c3a",
         "TELEGRAM_MEDIA_CHANNEL_ID": "123",
         "CORS_ALLOW_ORIGINS": '["https://app.chainofwinners.com", "https://admin.chainofwinners.com"]',
     }
@@ -79,6 +88,9 @@ def test_settings_overrides(monkeypatch) -> None:
     assert settings.TELEGRAM_API_HASH == overrides["TELEGRAM_API_HASH"]
     assert settings.TELEGRAM_ENABLED is False
     assert settings.TELEGRAM_SESSION_NAME == overrides["TELEGRAM_SESSION_NAME"]
+    assert settings.TELEGRAM_MTPROXY_HOST == overrides["TELEGRAM_MTPROXY_HOST"]
+    assert settings.TELEGRAM_MTPROXY_PORT == int(overrides["TELEGRAM_MTPROXY_PORT"])
+    assert settings.TELEGRAM_MTPROXY_SECRET == overrides["TELEGRAM_MTPROXY_SECRET"]
     assert settings.TELEGRAM_MEDIA_CHANNEL_ID == int(overrides["TELEGRAM_MEDIA_CHANNEL_ID"])
     assert settings.CORS_ALLOW_ORIGINS == [
         "https://app.chainofwinners.com",

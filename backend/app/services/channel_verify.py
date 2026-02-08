@@ -15,7 +15,7 @@ from app.models.channel_member import ChannelMember
 from app.models.channel_stats_snapshot import ChannelStatsSnapshot
 from app.models.user import User
 from app.telegram.permissions import check_bot_permissions
-from shared.telegram import TelegramClientService
+from shared.telegram import BotApiService, TelegramClientService
 
 
 async def verify_channel(
@@ -24,6 +24,7 @@ async def verify_channel(
     user: User,
     db: Session,
     telegram_client: TelegramClientService,
+    bot_api: BotApiService,
 ) -> Channel:
     channel = db.exec(select(Channel).where(Channel.id == channel_id)).first()
     if channel is None:
@@ -48,20 +49,25 @@ async def verify_channel(
     if channel_ref is None:
         raise ChannelVerificationError("Channel is missing Telegram identifiers", channel_id=channel_id)
 
-    await telegram_client.connect()
-    try:
-        client = telegram_client._get_client()
-        permission_result = await check_bot_permissions(client, channel_ref)
-        if not permission_result.ok:
-            raise ChannelBotPermissionDenied(
-                channel_id,
-                missing_permissions=list(permission_result.missing_permissions),
-            )
+    permission_result = await check_bot_permissions(bot_api, channel_ref)
+    if not permission_result.ok:
+        raise ChannelBotPermissionDenied(
+            channel_id,
+            missing_permissions=list(permission_result.missing_permissions),
+        )
 
+    try:
+        await telegram_client.connect()
+        client = telegram_client._get_client()
+        if not await _is_client_authorized(client):
+            raise ChannelVerificationError(
+                "Telegram client session is not authorized. Authenticate TELEGRAM_SESSION_NAME first.",
+                channel_id=channel_id,
+            )
         input_entity = await _resolve_input_entity(client, channel_ref)
         full_response = await client(functions.channels.GetFullChannelRequest(channel=input_entity))
         stats_response = await client(functions.stats.GetBroadcastStatsRequest(channel=input_entity))
-    except ChannelBotPermissionDenied:
+    except ChannelVerificationError:
         raise
     except Exception as exc:
         raise ChannelVerificationError(
@@ -86,6 +92,8 @@ async def verify_channel(
     raw_stats = {
         "full_channel": _to_dict(full_response),
         "statistics": _to_dict(stats_response),
+        "bot_chat_member": permission_result.raw_member,
+        "bot_permission_details": permission_result.permission_details,
     }
 
     try:
@@ -134,6 +142,13 @@ async def _resolve_input_entity(client, channel_ref):
     if get_input_entity is None:
         return channel_ref
     return await _maybe_await(get_input_entity(channel_ref))
+
+
+async def _is_client_authorized(client) -> bool:
+    is_user_authorized = getattr(client, "is_user_authorized", None)
+    if is_user_authorized is None:
+        return True
+    return bool(await _maybe_await(is_user_authorized()))
 
 
 def _extract_chat_info(full_response) -> tuple[int | None, str | None, str | None]:

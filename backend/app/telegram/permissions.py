@@ -5,11 +5,33 @@ import inspect
 from typing import Iterable
 
 REQUIRED_BOT_RIGHTS = {
-    "post_messages",
-    "edit_messages",
-    "delete_messages",
-    "view_statistics",
+    "can_post_messages",
+    "can_edit_messages",
+    "can_delete_messages",
+    "can_post_stories",
+    "can_edit_stories",
+    "can_delete_stories",
 }
+
+BOT_MEMBER_PERMISSION_FIELDS = (
+    "can_be_edited",
+    "is_anonymous",
+    "can_manage_chat",
+    "can_delete_messages",
+    "can_manage_video_chats",
+    "can_restrict_members",
+    "can_promote_members",
+    "can_change_info",
+    "can_invite_users",
+    "can_post_stories",
+    "can_edit_stories",
+    "can_delete_stories",
+    "can_post_messages",
+    "can_edit_messages",
+    "can_pin_messages",
+    "can_manage_topics",
+    "can_manage_direct_messages",
+)
 
 
 @dataclass(frozen=True)
@@ -18,15 +40,71 @@ class PermissionCheckResult:
     is_admin: bool
     missing_permissions: list[str]
     present_permissions: list[str]
+    permission_details: dict[str, bool | None] | None = None
+    raw_member: dict | None = None
 
 
-async def check_bot_permissions(client, channel) -> PermissionCheckResult:
-    """Check the current Telethon client's admin rights against REQUIRED_BOT_RIGHTS."""
-    return await _check_permissions(
-        client=client,
-        channel=channel,
-        who="me",
-        required_rights=REQUIRED_BOT_RIGHTS,
+async def check_bot_permissions(bot_api, channel) -> PermissionCheckResult:
+    """Check bot admin permissions in a channel via Bot API getMe/getChatMember."""
+    required_order = sorted(REQUIRED_BOT_RIGHTS)
+    try:
+        me = bot_api.get_me()
+        bot_id = int(me["id"])
+    except Exception:
+        return PermissionCheckResult(
+            ok=False,
+            is_admin=False,
+            missing_permissions=required_order,
+            present_permissions=[],
+            permission_details=None,
+            raw_member=None,
+        )
+
+    member: dict | None = None
+    refs = _build_bot_chat_refs(channel)
+    for chat_ref in refs:
+        try:
+            member = bot_api.get_chat_member(chat_id=chat_ref, user_id=bot_id)
+            break
+        except Exception:
+            continue
+
+    if member is None:
+        return PermissionCheckResult(
+            ok=False,
+            is_admin=False,
+            missing_permissions=required_order,
+            present_permissions=[],
+            permission_details=None,
+            raw_member=None,
+        )
+
+    status = str(member.get("status", "")).lower()
+    is_admin = status == "administrator"
+    permission_details = {
+        field: _coerce_optional_bool(member.get(field))
+        for field in BOT_MEMBER_PERMISSION_FIELDS
+    }
+
+    if not is_admin:
+        return PermissionCheckResult(
+            ok=False,
+            is_admin=False,
+            missing_permissions=required_order,
+            present_permissions=[],
+            permission_details=permission_details,
+            raw_member=member,
+        )
+
+    present = [right for right in required_order if permission_details.get(right) is True]
+    missing = [right for right in required_order if right not in present]
+    return PermissionCheckResult(
+        ok=len(missing) == 0,
+        is_admin=True,
+        missing_permissions=missing,
+        present_permissions=present,
+        permission_details=permission_details,
+        raw_member=member,
     )
 
 
@@ -120,6 +198,56 @@ def _has_right(admin_rights: object | None, right: str) -> bool:
     if admin_rights is None:
         return False
     return bool(getattr(admin_rights, right, False))
+
+
+def _coerce_optional_bool(value) -> bool | None:
+    if value is None:
+        return None
+    return bool(value)
+
+
+def _build_bot_chat_refs(channel) -> list[int | str]:
+    refs: list[int | str] = []
+    seen: set[int | str] = set()
+
+    def add(ref: int | str) -> None:
+        if ref in seen:
+            return
+        seen.add(ref)
+        refs.append(ref)
+
+    if isinstance(channel, str):
+        value = channel.strip()
+        if not value:
+            return refs
+        if value.lstrip("-").isdigit():
+            for item in _numeric_chat_refs(int(value)):
+                add(item)
+            return refs
+
+        if value.startswith("@"):
+            add(value)
+            add(value[1:])
+            return refs
+
+        add(f"@{value}")
+        add(value)
+        return refs
+
+    if isinstance(channel, int):
+        for item in _numeric_chat_refs(channel):
+            add(item)
+        return refs
+
+    add(channel)
+    return refs
+
+
+def _numeric_chat_refs(value: int) -> list[int]:
+    if value > 0:
+        # Telethon channel ids are usually positive; Bot API channel ids use -100 prefix.
+        return [int(f"-100{value}"), value]
+    return [value]
 
 
 async def _maybe_await(value):
