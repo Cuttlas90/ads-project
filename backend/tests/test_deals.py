@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
@@ -251,7 +252,7 @@ def test_listing_deal_price_locked(client: TestClient) -> None:
     response = client.patch(
         f"/deals/{deal_id}",
         json={"price_ton": "12.00"},
-        headers=_auth_headers(101),
+        headers=_auth_headers(202),
     )
     assert response.status_code == 403
 
@@ -262,7 +263,7 @@ def test_listing_deal_placement_terms_locked(client: TestClient) -> None:
     response = client.patch(
         f"/deals/{deal_id}",
         json={"placement_type": "story", "exclusive_hours": 6, "retention_hours": 48},
-        headers=_auth_headers(101),
+        headers=_auth_headers(202),
     )
     assert response.status_code == 403
 
@@ -275,7 +276,67 @@ def test_accept_deal_requires_counterparty(client: TestClient) -> None:
 
     response = client.post(f"/deals/{deal_id}/accept", headers=_auth_headers(202))
     assert response.status_code == 200
-    assert response.json()["state"] == DealState.ACCEPTED.value
+    assert response.json()["state"] == DealState.CREATIVE_APPROVED.value
+
+
+def test_reject_deal_requires_counterparty(client: TestClient) -> None:
+    deal_id = _create_listing_deal(client, advertiser_id=101, owner_id=202)
+
+    response = client.post(f"/deals/{deal_id}/reject", headers=_auth_headers(101))
+    assert response.status_code == 409
+
+    response = client.post(f"/deals/{deal_id}/reject", headers=_auth_headers(202))
+    assert response.status_code == 200
+    assert response.json()["state"] == DealState.REJECTED.value
+
+
+def test_update_deal_requires_latest_proposal_counterparty(client: TestClient) -> None:
+    deal_id = _create_listing_deal(client, advertiser_id=101, owner_id=202)
+
+    own_update = client.patch(
+        f"/deals/{deal_id}",
+        json={"creative_text": "Advertiser edit"},
+        headers=_auth_headers(101),
+    )
+    assert own_update.status_code == 409
+
+    counterparty_update = client.patch(
+        f"/deals/{deal_id}",
+        json={"creative_text": "Owner edit"},
+        headers=_auth_headers(202),
+    )
+    assert counterparty_update.status_code == 200
+
+
+def test_update_deal_proposal_event_stores_full_snapshot(client: TestClient, db_engine) -> None:
+    deal_id = _create_listing_deal(client, advertiser_id=101, owner_id=202)
+
+    response = client.patch(
+        f"/deals/{deal_id}",
+        json={"creative_text": "Owner update"},
+        headers=_auth_headers(202),
+    )
+    assert response.status_code == 200
+
+    with Session(db_engine) as session:
+        proposal_events = session.exec(
+            select(DealEvent)
+            .where(DealEvent.deal_id == deal_id)
+            .where(DealEvent.event_type == "proposal")
+            .order_by(DealEvent.created_at.desc(), DealEvent.id.desc())
+        ).all()
+        latest = proposal_events[0]
+        payload = latest.payload or {}
+        assert payload["creative_text"] == "Owner update"
+        assert payload["price_ton"] == "10.00"
+        assert payload["ad_type"] == "post"
+        assert payload["placement_type"] == "post"
+        assert payload["exclusive_hours"] == 1
+        assert payload["retention_hours"] == 24
+        assert payload["creative_media_type"] == "image"
+        assert payload["creative_media_ref"] == "ref"
+        assert "start_at" in payload
+        assert "posting_params" in payload
 
 
 def test_accept_campaign_application_creates_deal(client: TestClient, db_engine) -> None:
@@ -533,6 +594,21 @@ def test_send_deal_message(client: TestClient, monkeypatch) -> None:
     assert payload["text"] == "Hello"
 
 
+def test_send_deal_message_blocked_after_reject(client: TestClient) -> None:
+    deal_id = _create_listing_deal(client, advertiser_id=101, owner_id=202)
+
+    reject_response = client.post(f"/deals/{deal_id}/reject", headers=_auth_headers(202))
+    assert reject_response.status_code == 200
+    assert reject_response.json()["state"] == DealState.REJECTED.value
+
+    response = client.post(
+        f"/deals/{deal_id}/messages",
+        json={"text": "Hello after reject"},
+        headers=_auth_headers(101),
+    )
+    assert response.status_code == 409
+
+
 def test_deals_inbox_filters_and_pagination(client: TestClient, db_engine) -> None:
     deal_id_one = _create_listing_deal(client, advertiser_id=101, owner_id=202)
     deal_id_two = _create_listing_deal(client, advertiser_id=101, owner_id=202)
@@ -588,6 +664,16 @@ def test_deal_timeline_merges_events(client: TestClient, db_engine) -> None:
     deal_id = _create_listing_deal(client, advertiser_id=101, owner_id=202)
     with Session(db_engine) as session:
         deal = session.exec(select(Deal).where(Deal.id == deal_id)).one()
+        proposal = session.exec(
+            select(DealEvent)
+            .where(DealEvent.deal_id == deal_id)
+            .where(DealEvent.event_type == "proposal")
+            .order_by(DealEvent.created_at.desc(), DealEvent.id.desc())
+        ).first()
+        assert proposal is not None
+        proposal.created_at = datetime(2026, 2, 9, 9, 0, tzinfo=timezone.utc)
+        session.add(proposal)
+
         escrow = DealEscrow(
             deal_id=deal.id,
             state="CREATED",
@@ -605,6 +691,7 @@ def test_deal_timeline_merges_events(client: TestClient, db_engine) -> None:
                 event_type="transition",
                 from_state="DRAFT",
                 to_state="NEGOTIATION",
+                created_at=datetime(2026, 2, 9, 10, 0, tzinfo=timezone.utc),
             )
         )
         session.add(
@@ -615,29 +702,37 @@ def test_deal_timeline_merges_events(client: TestClient, db_engine) -> None:
                 to_state="CREATED",
                 event_type="created",
                 payload=None,
+                created_at=datetime(2026, 2, 9, 11, 0, tzinfo=timezone.utc),
             )
         )
         session.commit()
 
-    response = client.get(f"/deals/{deal_id}/events?limit=1", headers=_auth_headers(101))
+    response = client.get(f"/deals/{deal_id}/events?limit=2", headers=_auth_headers(101))
     assert response.status_code == 200
     payload = response.json()
-    assert len(payload["items"]) == 1
+    assert len(payload["items"]) == 2
+    assert payload["items"][0]["event_type"] == "created"
+    assert payload["items"][1]["event_type"] == "transition"
     assert payload["next_cursor"] is not None
 
     response_page_two = client.get(
         f"/deals/{deal_id}/events",
         headers=_auth_headers(101),
-        params={"cursor": payload["next_cursor"], "limit": 1},
+        params={"cursor": payload["next_cursor"], "limit": 2},
     )
     assert response_page_two.status_code == 200
     payload_two = response_page_two.json()
     assert len(payload_two["items"]) == 1
+    assert payload_two["items"][0]["event_type"] == "proposal"
 
 
 def test_creative_endpoints_flow(client: TestClient, db_engine) -> None:
     deal_id = _create_listing_deal(client, advertiser_id=101, owner_id=202)
-    client.post(f"/deals/{deal_id}/accept", headers=_auth_headers(202))
+    with Session(db_engine) as session:
+        deal = session.exec(select(Deal).where(Deal.id == deal_id)).one()
+        deal.state = DealState.ACCEPTED.value
+        session.add(deal)
+        session.commit()
 
     response = client.post(
         f"/deals/{deal_id}/creative/submit",
@@ -672,7 +767,7 @@ def test_creative_endpoints_flow(client: TestClient, db_engine) -> None:
     assert response.json()["state"] == DealState.CREATIVE_APPROVED.value
 
 
-def test_creative_upload_endpoint(client: TestClient, monkeypatch) -> None:
+def test_creative_upload_endpoint(client: TestClient, monkeypatch, db_engine) -> None:
     def fake_post(url: str, data: dict, files: dict):
         class DummyResponse:
             status_code = 200
@@ -685,7 +780,11 @@ def test_creative_upload_endpoint(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(bot_api.httpx, "post", fake_post)
 
     deal_id = _create_listing_deal(client, advertiser_id=101, owner_id=202)
-    client.post(f"/deals/{deal_id}/accept", headers=_auth_headers(202))
+    with Session(db_engine) as session:
+        deal = session.exec(select(Deal).where(Deal.id == deal_id)).one()
+        deal.state = DealState.ACCEPTED.value
+        session.add(deal)
+        session.commit()
 
     response = client.post(
         f"/deals/{deal_id}/creative/upload",
@@ -696,3 +795,69 @@ def test_creative_upload_endpoint(client: TestClient, monkeypatch) -> None:
     payload = response.json()
     assert payload["creative_media_ref"] == "file-1"
     assert payload["creative_media_type"] == "image"
+
+
+def test_proposal_media_upload_requires_latest_counterparty(client: TestClient, monkeypatch) -> None:
+    def fake_post(url: str, data: dict, files: dict):
+        class DummyResponse:
+            status_code = 200
+
+            def json(self) -> dict:
+                return {"ok": True, "result": {"photo": [{"file_id": "proposal-file-1"}]}}
+
+        return DummyResponse()
+
+    monkeypatch.setattr(bot_api.httpx, "post", fake_post)
+
+    deal_id = _create_listing_deal(client, advertiser_id=101, owner_id=202)
+
+    own_proposal_upload = client.post(
+        f"/deals/{deal_id}/proposal/upload",
+        files={"file": ("photo.jpg", b"data", "image/jpeg")},
+        headers=_auth_headers(101),
+    )
+    assert own_proposal_upload.status_code == 409
+
+    counterparty_upload = client.post(
+        f"/deals/{deal_id}/proposal/upload",
+        files={"file": ("photo.jpg", b"data", "image/jpeg")},
+        headers=_auth_headers(202),
+    )
+    assert counterparty_upload.status_code == 200
+    payload = counterparty_upload.json()
+    assert payload["creative_media_ref"] == "proposal-file-1"
+    assert payload["creative_media_type"] == "image"
+
+
+def test_proposal_media_preview_endpoint(client: TestClient, monkeypatch) -> None:
+    def fake_post(url: str, json: dict):
+        class DummyResponse:
+            status_code = 200
+
+            def json(self) -> dict:
+                return {"ok": True, "result": {"file_path": "photos/preview-1.jpg"}}
+
+        return DummyResponse()
+
+    def fake_get(url: str):
+        class DummyResponse:
+            status_code = 200
+            content = b"image-bytes"
+            headers = {"content-type": "image/jpeg"}
+            text = "ok"
+
+        return DummyResponse()
+
+    monkeypatch.setattr(bot_api.httpx, "post", fake_post)
+    monkeypatch.setattr(bot_api.httpx, "get", fake_get)
+
+    deal_id = _create_listing_deal(client, advertiser_id=101, owner_id=202)
+
+    response = client.get(
+        f"/deals/{deal_id}/proposal/media",
+        params={"media_ref": "ref"},
+        headers=_auth_headers(101),
+    )
+    assert response.status_code == 200
+    assert response.content == b"image-bytes"
+    assert response.headers["content-type"].startswith("image/jpeg")

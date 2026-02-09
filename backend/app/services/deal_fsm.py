@@ -51,8 +51,12 @@ TRANSITIONS: dict[tuple[str, str], TransitionSpec] = {
         DealState.NEGOTIATION.value,
         {DealActorRole.advertiser.value, DealActorRole.channel_owner.value},
     ),
+    (DealAction.accept.value, DealState.DRAFT.value): TransitionSpec(
+        DealState.CREATIVE_APPROVED.value,
+        {DealActorRole.advertiser.value, DealActorRole.channel_owner.value},
+    ),
     (DealAction.accept.value, DealState.NEGOTIATION.value): TransitionSpec(
-        DealState.ACCEPTED.value,
+        DealState.CREATIVE_APPROVED.value,
         {DealActorRole.advertiser.value, DealActorRole.channel_owner.value},
     ),
     (DealAction.creative_submit.value, DealState.ACCEPTED.value): TransitionSpec(

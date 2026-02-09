@@ -190,7 +190,7 @@ export interface DealTimelineEvent {
   event_type: string
   from_state?: string | null
   to_state?: string | null
-  payload?: Record<string, unknown> | null
+  payload?: Record<string, unknown> | unknown[] | null
   created_at: string
   actor_id?: number | null
 }

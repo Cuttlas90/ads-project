@@ -85,17 +85,12 @@ The marketplace Start deal UI SHALL require creative media upload before submitt
 - **THEN** the UI submits `start_at` with creative fields in `POST /listings/{listing_id}/deals`
 
 ### Requirement: Creative approval FSM transitions
-The system SHALL include the explicit DealState `CREATIVE_CHANGES_REQUESTED`. It SHALL allow:
-- `ACCEPTED -> CREATIVE_SUBMITTED` (owner submits creative)
-- `CREATIVE_SUBMITTED -> CREATIVE_APPROVED` (advertiser approves)
-- `CREATIVE_SUBMITTED -> CREATIVE_CHANGES_REQUESTED` (advertiser requests edits)
-- `CREATIVE_CHANGES_REQUESTED -> CREATIVE_SUBMITTED` (owner resubmits)
-All transitions SHALL use the deal transition table and write deal events.
+The system SHALL support proposal decision transitions directly from negotiation: only the latest-proposal recipient may approve or reject while the deal is in `DRAFT` or `NEGOTIATION`. Approve SHALL finalize the deal to `CREATIVE_APPROVED`, and reject SHALL finalize the deal to `REJECTED`. Legacy creative submit/review screens SHALL be bypassed in the primary deal-detail flow after proposal approval.
 
-#### Scenario: Advertiser requests edits
-- **GIVEN** a deal in `CREATIVE_SUBMITTED`
-- **WHEN** the advertiser requests edits
-- **THEN** the deal transitions to `CREATIVE_CHANGES_REQUESTED`
+#### Scenario: Counterparty approves latest proposal
+- **GIVEN** a deal in `DRAFT` or `NEGOTIATION` with a latest proposal from the opposite party
+- **WHEN** the latest-proposal recipient approves
+- **THEN** the deal transitions to `CREATIVE_APPROVED`
 
 ### Requirement: Escrow init gated by creative approval
 The system SHALL allow `POST /deals/{id}/escrow/init` and `POST /deals/{id}/escrow/tonconnect-tx` only when
@@ -177,19 +172,29 @@ The deal detail UI SHALL provide an action that opens the system bot chat using 
 - **WHEN** a user views a deal detail page
 - **THEN** an "Open bot messages" action is available and links to the system bot with the deal id
 
-### Requirement: Deal timeline rendering
-The deal detail UI SHALL render events returned by `GET /deals/{id}/events` in chronological order, displaying event type and timestamp.
+### Requirement: Deal event detail interaction
+The deal detail UI SHALL open event details when a timeline row is tapped. For `message` events, the detail view SHALL show only message text. For `proposal` events, the detail view SHALL show proposal parameters from event payload; older proposal events SHALL be read-only, while the latest proposal SHALL expose actions only to the proposal recipient.
 
-#### Scenario: Timeline renders events
+#### Scenario: Tapping message event shows message only
+- **WHEN** a user taps a timeline row for an event with `event_type = message`
+- **THEN** the detail view shows only the message text
+
+### Requirement: Deal timeline rendering
+The deal detail UI SHALL render events returned by `GET /deals/{id}/events` in reverse-chronological order (newest first). The timestamp SHALL be right-aligned in each event row and formatted as:
+- `HH:mm` for events occurring today in the user's local timezone,
+- `dd MMM HH:mm` for events in the current year but not today,
+- `dd MMM yyyy` for events outside the current year.
+
+#### Scenario: Timeline renders newest-first with human time
 - **WHEN** the UI receives events from `/deals/{id}/events`
-- **THEN** the timeline lists them in chronological order with timestamps
+- **THEN** the timeline lists newest events first and each row shows right-aligned human-formatted time
 
 ### Requirement: State-based action panel
-The deal detail UI SHALL show only actions valid for the current `deal.state` and user role (e.g., submit creative, approve, request edits, fund).
+The deal detail UI SHALL show proposal actions only when valid for the current deal state and actor. For a deal in `DRAFT` or `NEGOTIATION`, only the latest-proposal recipient SHALL see `Edit`, `Approve`, and `Reject` actions. `Edit` SHALL allow changes to only `creative_text`, `start_at`, `creative_media_type`, and `creative_media_ref`; other proposal fields SHALL be view-only. In `REJECTED` and post-approval states, the negotiation action panel SHALL be hidden.
 
-#### Scenario: Invalid actions hidden
-- **WHEN** a deal is in a given state
-- **THEN** actions not allowed for that state and role are not displayed
+#### Scenario: Sender cannot act on own latest proposal
+- **WHEN** the current user is the sender of the latest proposal
+- **THEN** `Edit`, `Approve`, and `Reject` actions are not shown
 
 ### Requirement: Funding flow uses TONConnect
 The funding screen SHALL check wallet readiness from authenticated user data before funding actions. If the advertiser wallet is missing (`has_wallet = false`), the screen SHALL hard-block funding actions, SHALL show an in-page modal with one-click navigation to `/profile` including a return target (`next`) to the same funding route, and SHALL NOT call `POST /deals/{id}/escrow/init` or `POST /deals/{id}/escrow/tonconnect-tx`. When wallet readiness is true, the funding screen SHALL use TONConnect UI to submit the payload from `POST /deals/{id}/escrow/tonconnect-tx` and SHALL poll `GET /deals/{id}/escrow` until the escrow state is `FUNDED` or `FAILED`.
@@ -290,4 +295,3 @@ The UI SHALL expose stats pages for both roles using role-scoped routes (`/adver
 #### Scenario: Owner opens advertiser stats deep link
 - **WHEN** a user with owner role opens `/advertiser/channels/:channelId/stats`
 - **THEN** the app redirects to `/owner`
-

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
@@ -44,6 +44,7 @@ DEFAULT_PAGE = 1
 DEFAULT_PAGE_SIZE = 20
 DEFAULT_TIMELINE_LIMIT = 20
 CURSOR_SOURCE_ORDER = {"deal": 0, "escrow": 1}
+NEGOTIATION_STATES = {DealState.DRAFT.value, DealState.NEGOTIATION.value}
 
 
 def _deal_summary(deal: Deal) -> DealSummary:
@@ -200,6 +201,81 @@ def _latest_proposal_actor(db: Session, deal_id: int) -> int | None:
         .first()
     )
     return event.actor_id if event else None
+
+
+def _require_latest_proposal_counterparty(db: Session, deal: Deal, actor_id: int | None, *, action: str) -> None:
+    if actor_id is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    last_actor_id = _latest_proposal_actor(db, deal.id)
+    if last_actor_id is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"No proposal to {action}")
+    if last_actor_id == actor_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Cannot {action} your own proposal")
+
+
+def _build_proposal_snapshot(deal: Deal) -> dict[str, object]:
+    return _serialize_payload(
+        {
+            "price_ton": deal.price_ton,
+            "ad_type": deal.ad_type,
+            "placement_type": deal.placement_type,
+            "exclusive_hours": deal.exclusive_hours,
+            "retention_hours": deal.retention_hours,
+            "creative_text": deal.creative_text,
+            "creative_media_type": deal.creative_media_type,
+            "creative_media_ref": deal.creative_media_ref,
+            "start_at": deal.scheduled_at,
+            "posting_params": deal.posting_params,
+        }
+    )
+
+
+def _upload_media_to_telegram(*, file: UploadFile, settings: Settings) -> DealCreativeUploadResponse:
+    content_type = file.content_type or ""
+    if content_type.startswith("image/"):
+        media_type = "image"
+    elif content_type.startswith("video/"):
+        media_type = "video"
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid creative_media_type")
+
+    content = file.file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty upload")
+
+    service = BotApiService(settings)
+    try:
+        result = service.upload_media(
+            media_type=media_type,
+            filename=file.filename or f"creative.{media_type}",
+            content=content,
+        )
+    except (TelegramApiError, TelegramConfigError) as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to upload media") from exc
+
+    return DealCreativeUploadResponse(
+        creative_media_ref=result["file_id"],
+        creative_media_type=result["media_type"],
+    )
+
+
+def _known_proposal_media_refs(db: Session, deal: Deal) -> set[str]:
+    known_refs: set[str] = set()
+    if deal.creative_media_ref:
+        known_refs.add(deal.creative_media_ref)
+
+    proposal_payloads = db.exec(
+        select(DealEvent.payload).where(DealEvent.deal_id == deal.id).where(DealEvent.event_type == "proposal")
+    ).all()
+    for payload in proposal_payloads:
+        if not isinstance(payload, dict):
+            continue
+        media_ref = payload.get("creative_media_ref")
+        if isinstance(media_ref, str) and media_ref.strip():
+            known_refs.add(media_ref.strip())
+
+    return known_refs
 
 
 @router.get("", response_model=DealInboxPage)
@@ -375,14 +451,15 @@ def list_deal_events(
             item["created_at"],
             CURSOR_SOURCE_ORDER[item["source"]],
             item["id"],
-        )
+        ),
+        reverse=True,
     )
 
     if cursor_key is not None:
         merged = [
             item
             for item in merged
-            if (item["created_at"], CURSOR_SOURCE_ORDER[item["source"]], item["id"]) > cursor_key
+            if (item["created_at"], CURSOR_SOURCE_ORDER[item["source"]], item["id"]) < cursor_key
         ]
 
     next_cursor = None
@@ -416,8 +493,9 @@ def update_deal(
     deal = _load_deal(db, deal_id)
     actor_role = _require_actor_role(deal, current_user.id)
 
-    if deal.state not in {DealState.DRAFT.value, DealState.NEGOTIATION.value}:
+    if deal.state not in NEGOTIATION_STATES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deal cannot be updated")
+    _require_latest_proposal_counterparty(db, deal, current_user.id, action="edit")
 
     updates: dict[str, object] = {}
 
@@ -467,15 +545,11 @@ def update_deal(
     deal.updated_at = datetime.now(timezone.utc)
     db.add(deal)
 
-    event_updates = dict(updates)
-    if "scheduled_at" in event_updates:
-        event_updates["start_at"] = event_updates.pop("scheduled_at")
-
     proposal_event = DealEvent(
         deal_id=deal.id,
         actor_id=current_user.id,
         event_type="proposal",
-        payload=_serialize_payload(event_updates),
+        payload=_build_proposal_snapshot(deal),
     )
     db.add(proposal_event)
 
@@ -507,32 +581,49 @@ def accept_deal(
     deal = _load_deal(db, deal_id)
     actor_role = _require_actor_role(deal, current_user.id)
 
-    if deal.state not in {DealState.DRAFT.value, DealState.NEGOTIATION.value}:
+    if deal.state not in NEGOTIATION_STATES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deal cannot be accepted")
-
-    last_actor_id = _latest_proposal_actor(db, deal.id)
-    if last_actor_id is None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No proposal to accept")
-    if last_actor_id == current_user.id:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot accept your own proposal")
+    _require_latest_proposal_counterparty(db, deal, current_user.id, action="accept")
 
     try:
-        if deal.state == DealState.DRAFT.value:
-            apply_transition(
-                db,
-                deal=deal,
-                action=DealAction.advance.value,
-                actor_id=None,
-                actor_role=DealActorRole.system.value,
-                payload={"reason": "accept_from_draft"},
-            )
         apply_transition(
             db,
             deal=deal,
             action=DealAction.accept.value,
             actor_id=current_user.id,
             actor_role=actor_role,
-            payload={"reason": "accepted"},
+            payload={"reason": "proposal_approved"},
+        )
+    except DealTransitionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    db.commit()
+    db.refresh(deal)
+    return _deal_summary(deal)
+
+
+@router.post("/{deal_id}/reject", response_model=DealSummary)
+def reject_deal(
+    deal_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> DealSummary:
+    deal = _load_deal(db, deal_id)
+    actor_role = _require_actor_role(deal, current_user.id)
+
+    if deal.state not in NEGOTIATION_STATES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deal cannot be rejected")
+    _require_latest_proposal_counterparty(db, deal, current_user.id, action="reject")
+
+    try:
+        apply_transition(
+            db,
+            deal=deal,
+            action=DealAction.reject.value,
+            actor_id=current_user.id,
+            actor_role=actor_role,
+            payload={"reason": "proposal_rejected"},
         )
     except DealTransitionError as exc:
         db.rollback()
@@ -657,31 +748,51 @@ def upload_creative_media(
     if actor_role != DealActorRole.channel_owner.value:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only channel owner may upload creative")
 
-    content_type = file.content_type or ""
-    if content_type.startswith("image/"):
-        media_type = "image"
-    elif content_type.startswith("video/"):
-        media_type = "video"
-    else:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid creative_media_type")
+    return _upload_media_to_telegram(file=file, settings=settings)
 
-    content = file.file.read()
-    if not content:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty upload")
+
+@router.post("/{deal_id}/proposal/upload", response_model=DealCreativeUploadResponse)
+def upload_proposal_media(
+    deal_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings_dep),
+) -> DealCreativeUploadResponse:
+    deal = _load_deal(db, deal_id)
+    _require_actor_role(deal, current_user.id)
+    if deal.state not in NEGOTIATION_STATES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deal is not open for proposal edits")
+    _require_latest_proposal_counterparty(db, deal, current_user.id, action="edit")
+
+    return _upload_media_to_telegram(file=file, settings=settings)
+
+
+@router.get("/{deal_id}/proposal/media")
+def get_proposal_media(
+    deal_id: int,
+    media_ref: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings_dep),
+) -> Response:
+    deal = _load_deal(db, deal_id)
+    _require_actor_role(deal, current_user.id)
+
+    normalized_media_ref = _require_non_empty(media_ref, field="media_ref")
+    if normalized_media_ref not in _known_proposal_media_refs(db, deal):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media not found")
 
     service = BotApiService(settings)
     try:
-        result = service.upload_media(
-            media_type=media_type,
-            filename=file.filename or f"creative.{media_type}",
-            content=content,
-        )
+        content, content_type = service.download_file(file_id=normalized_media_ref)
     except (TelegramApiError, TelegramConfigError) as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to upload media") from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to load media") from exc
 
-    return DealCreativeUploadResponse(
-        creative_media_ref=result["file_id"],
-        creative_media_type=result["media_type"],
+    return Response(
+        content=content,
+        media_type=content_type or "application/octet-stream",
+        headers={"Cache-Control": "private, max-age=60"},
     )
 
 
@@ -817,6 +928,8 @@ def send_deal_message(
 ) -> DealMessageSummary:
     deal = _load_deal(db, deal_id)
     sender_role = _require_actor_role(deal, current_user.id)
+    if deal.state not in NEGOTIATION_STATES:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Deal is not open for messaging")
 
     message_text = _require_non_empty(payload.text, field="text")
 

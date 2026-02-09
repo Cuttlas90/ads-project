@@ -18,6 +18,9 @@ class BotApiService:
     def _base_url(self) -> str:
         return f"https://api.telegram.org/bot{self._settings.TELEGRAM_BOT_TOKEN}"
 
+    def _file_base_url(self) -> str:
+        return f"https://api.telegram.org/file/bot{self._settings.TELEGRAM_BOT_TOKEN}"
+
     def _require_story_capability(self) -> str:
         business_connection_id = getattr(self._settings, "TELEGRAM_BUSINESS_CONNECTION_ID", None)
         if not business_connection_id:
@@ -169,3 +172,33 @@ class BotApiService:
             raise TelegramApiError("Bot API response missing file_id")
 
         return {"file_id": file_id, "media_type": media_type}
+
+    def get_file_path(self, *, file_id: str) -> str:
+        normalized_file_id = file_id.strip()
+        if not normalized_file_id:
+            raise TelegramApiError("Missing file_id")
+
+        payload = self._post("getFile", {"file_id": normalized_file_id})
+        if not payload.get("ok"):
+            raise TelegramApiError(f"Bot API error: {payload}")
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            raise TelegramApiError("Bot API response missing getFile result")
+
+        file_path = result.get("file_path")
+        if not isinstance(file_path, str) or not file_path.strip():
+            raise TelegramApiError("Bot API response missing file_path")
+        return file_path
+
+    def download_file(self, *, file_id: str) -> tuple[bytes, str | None]:
+        self._require_enabled()
+        file_path = self.get_file_path(file_id=file_id)
+
+        response = httpx.get(f"{self._file_base_url()}/{file_path}")
+        if response.status_code != 200:
+            raise TelegramApiError(
+                f"Bot API file error {response.status_code}: {response.text}"
+            )
+
+        content_type = response.headers.get("content-type")
+        return response.content, content_type
