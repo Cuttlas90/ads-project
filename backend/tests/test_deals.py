@@ -119,10 +119,17 @@ def _create_listing_format(client: TestClient, listing_id: int, owner_id: int) -
     return response.json()["id"]
 
 
-def _create_campaign(client: TestClient, advertiser_id: int, max_acceptances: int | None = None) -> int:
+def _create_campaign(
+    client: TestClient,
+    advertiser_id: int,
+    max_acceptances: int | None = None,
+    budget_ton: str | None = None,
+) -> int:
     payload: dict[str, object] = {"title": "Launch", "brief": "Details"}
     if max_acceptances is not None:
         payload["max_acceptances"] = max_acceptances
+    if budget_ton is not None:
+        payload["budget_ton"] = budget_ton
     response = client.post(
         "/campaigns",
         json=payload,
@@ -140,7 +147,13 @@ def _mark_channel_verified(db_engine, channel_id: int) -> None:
         session.commit()
 
 
-def _create_listing_deal(client: TestClient, advertiser_id: int, owner_id: int) -> int:
+def _create_listing_deal(
+    client: TestClient,
+    advertiser_id: int,
+    owner_id: int,
+    *,
+    start_at: str | None = None,
+) -> int:
     global _CHANNEL_SEQ
     _CHANNEL_SEQ += 1
     channel_id = _create_channel(client, owner_id=owner_id, username=f"@chan{owner_id}_{_CHANNEL_SEQ}")
@@ -153,15 +166,19 @@ def _create_listing_deal(client: TestClient, advertiser_id: int, owner_id: int) 
     )
     assert activate_response.status_code == 200
 
+    payload: dict[str, object] = {
+        "listing_format_id": format_id,
+        "creative_text": "Hello",
+        "creative_media_type": "image",
+        "creative_media_ref": "ref",
+        "posting_params": {"hour": 10},
+    }
+    if start_at is not None:
+        payload["start_at"] = start_at
+
     response = client.post(
         f"/listings/{listing_id}/deals",
-        json={
-            "listing_format_id": format_id,
-            "creative_text": "Hello",
-            "creative_media_type": "image",
-            "creative_media_ref": "ref",
-            "posting_params": {"hour": 10},
-        },
+        json=payload,
         headers=_auth_headers(advertiser_id),
     )
     assert response.status_code == 201
@@ -186,6 +203,20 @@ def test_create_deal_from_listing(client: TestClient, db_engine) -> None:
         assert event.event_type == "proposal"
 
 
+def test_listing_deal_start_at_is_saved_as_scheduled_at(client: TestClient, db_engine) -> None:
+    deal_id = _create_listing_deal(
+        client,
+        advertiser_id=101,
+        owner_id=202,
+        start_at="2026-02-10T12:30:00+00:00",
+    )
+
+    with Session(db_engine) as session:
+        deal = session.exec(select(Deal).where(Deal.id == deal_id)).one()
+        assert deal.scheduled_at is not None
+        assert deal.scheduled_at.isoformat() == "2026-02-10T12:30:00"
+
+
 def test_listing_deal_update_moves_to_negotiation(client: TestClient, db_engine) -> None:
     deal_id = _create_listing_deal(client, advertiser_id=101, owner_id=202)
 
@@ -196,6 +227,22 @@ def test_listing_deal_update_moves_to_negotiation(client: TestClient, db_engine)
     )
     assert response.status_code == 200
     assert response.json()["state"] == DealState.NEGOTIATION.value
+
+
+def test_listing_deal_start_time_is_negotiable(client: TestClient, db_engine) -> None:
+    deal_id = _create_listing_deal(client, advertiser_id=101, owner_id=202)
+
+    response = client.patch(
+        f"/deals/{deal_id}",
+        json={"start_at": "2026-02-11T09:00:00+00:00"},
+        headers=_auth_headers(202),
+    )
+    assert response.status_code == 200
+
+    with Session(db_engine) as session:
+        deal = session.exec(select(Deal).where(Deal.id == deal_id)).one()
+        assert deal.scheduled_at is not None
+        assert deal.scheduled_at.isoformat() == "2026-02-11T09:00:00"
 
 
 def test_listing_deal_price_locked(client: TestClient) -> None:
@@ -232,13 +279,13 @@ def test_accept_deal_requires_counterparty(client: TestClient) -> None:
 
 
 def test_accept_campaign_application_creates_deal(client: TestClient, db_engine) -> None:
-    campaign_id = _create_campaign(client, advertiser_id=101)
+    campaign_id = _create_campaign(client, advertiser_id=101, budget_ton="15.00")
     channel_id = _create_channel(client, owner_id=202, username="@ownerchannel")
     _mark_channel_verified(db_engine, channel_id)
 
     response = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(202),
     )
     assert response.status_code == 201
@@ -248,10 +295,10 @@ def test_accept_campaign_application_creates_deal(client: TestClient, db_engine)
         f"/campaigns/{campaign_id}/applications/{application_id}/accept",
         json={
             "price_ton": "15.00",
-            "ad_type": "Post",
             "creative_text": "Campaign",
             "creative_media_type": "video",
             "creative_media_ref": "video-ref",
+            "start_at": "2026-02-10T10:00:00+00:00",
             "posting_params": {"hour": 12},
         },
         headers=_auth_headers(101),
@@ -260,10 +307,47 @@ def test_accept_campaign_application_creates_deal(client: TestClient, db_engine)
     payload = response.json()
     assert payload["source_type"] == DealSourceType.CAMPAIGN.value
     assert payload["state"] == DealState.DRAFT.value
+    assert payload["placement_type"] == "post"
+    assert payload["exclusive_hours"] == 1
+    assert payload["retention_hours"] == 24
+    assert payload["scheduled_at"] == "2026-02-10T10:00:00"
 
     with Session(db_engine) as session:
         application = session.exec(select(CampaignApplication).where(CampaignApplication.id == application_id)).one()
         assert application.status == "accepted"
+
+
+def test_campaign_accept_defaults_price_from_campaign_budget(client: TestClient, db_engine) -> None:
+    campaign_id = _create_campaign(client, advertiser_id=101, budget_ton="19.00")
+    channel_id = _create_channel(client, owner_id=202, username="@ownerchannel_budget")
+    _mark_channel_verified(db_engine, channel_id)
+
+    apply_response = client.post(
+        f"/campaigns/{campaign_id}/apply",
+        json={
+            "channel_id": channel_id,
+            "proposed_format_label": "Post",
+            "proposed_placement_type": "post",
+            "proposed_exclusive_hours": 1,
+            "proposed_retention_hours": 24,
+        },
+        headers=_auth_headers(202),
+    )
+    assert apply_response.status_code == 201
+
+    accept_response = client.post(
+        f"/campaigns/{campaign_id}/applications/{apply_response.json()['id']}/accept",
+        json={
+            "creative_text": "Campaign budget fallback",
+            "creative_media_type": "image",
+            "creative_media_ref": "budget-ref",
+        },
+        headers=_auth_headers(101),
+    )
+    assert accept_response.status_code == 201
+    payload = accept_response.json()
+    assert payload["price_ton"] == "19.00"
+    assert payload["ad_type"] == "Post"
 
 
 def test_accept_campaign_application_allows_multiple_deals_until_limit(client: TestClient, db_engine) -> None:
@@ -275,12 +359,12 @@ def test_accept_campaign_application_allows_multiple_deals_until_limit(client: T
 
     first_apply = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": first_channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": first_channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(202),
     )
     second_apply = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": second_channel_id, "proposed_format_label": "Story"},
+        json={"channel_id": second_channel_id, "proposed_format_label": "Story", "proposed_placement_type": "story", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(303),
     )
     assert first_apply.status_code == 201
@@ -327,12 +411,12 @@ def test_accept_campaign_application_blocks_after_limit(client: TestClient, db_e
 
     first_apply = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": first_channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": first_channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(202),
     )
     second_apply = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": second_channel_id, "proposed_format_label": "Story"},
+        json={"channel_id": second_channel_id, "proposed_format_label": "Story", "proposed_placement_type": "story", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(303),
     )
     assert first_apply.status_code == 201
@@ -383,12 +467,12 @@ def test_parallel_accept_requests_respect_max_acceptances(client: TestClient, db
 
     first_apply = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": first_channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": first_channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(202),
     )
     second_apply = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": second_channel_id, "proposed_format_label": "Story"},
+        json={"channel_id": second_channel_id, "proposed_format_label": "Story", "proposed_placement_type": "story", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(303),
     )
     assert first_apply.status_code == 201

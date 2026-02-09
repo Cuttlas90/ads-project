@@ -68,22 +68,18 @@ The system SHALL expose a single `apply_transition(deal, action, actor_id, actor
 - **THEN** the deal state changes and a `deal_events` row is written in the same transaction
 
 ### Requirement: Create deal from listing selection
-The system SHALL expose `POST /listings/{listing_id}/deals` requiring authentication. It SHALL require `listing_format_id`, `creative_text`, `creative_media_type`, `creative_media_ref`, and optional `posting_params`. It SHALL validate the listing exists, is active, and the format belongs to the listing. It SHALL create a deal in `DRAFT` with `source_type = listing`, `price_ton`, `ad_type`, `placement_type`, `exclusive_hours`, and `retention_hours` copied from the listing format, and ignore any client-provided values for these listing-derived fields.
+The system SHALL expose `POST /listings/{listing_id}/deals` requiring authentication. It SHALL require `listing_format_id`, `creative_text`, `creative_media_type`, `creative_media_ref`, and optional `posting_params` and `start_at`. It SHALL validate the listing exists, is active, and the format belongs to the listing. It SHALL create a deal in `DRAFT` with `source_type = listing`, `price_ton`, `ad_type`, `placement_type`, `exclusive_hours`, and `retention_hours` copied from the listing format. If `start_at` is provided, the system SHALL persist it as deal `scheduled_at`.
 
-#### Scenario: Listing selection creates draft deal with locked structured terms
-- **WHEN** an advertiser submits a valid listing format and creative payload
-- **THEN** the response is HTTP 201 with a deal in `DRAFT` and listing-derived terms locked to the selected format
+#### Scenario: Listing selection sets schedule from start_at
+- **WHEN** an advertiser submits a valid listing format and creative payload with `start_at`
+- **THEN** the response is HTTP 201 with a deal in `DRAFT` and `scheduled_at` equal to the provided `start_at`
 
 ### Requirement: Create deal from campaign application acceptance
-The system SHALL expose `POST /campaigns/{campaign_id}/applications/{application_id}/accept` requiring authentication. It SHALL allow only the campaign `advertiser_id` to call it. It SHALL validate the campaign exists and is not hidden, the application exists, belongs to the campaign, is not hidden, and is in `submitted` status. It SHALL require `price_ton`, `ad_type`, `creative_text`, `creative_media_type`, `creative_media_ref`, and optional `posting_params`. It SHALL create a deal in `DRAFT` with `source_type = campaign`, set `campaign_id` and `campaign_application_id`, set `channel_id` and `channel_owner_id` from the application, and set the application status to `accepted`. It SHALL enforce campaign `max_acceptances`; if current accepted count is already at limit, it SHALL reject with HTTP 409 and SHALL NOT create a deal. It SHALL return HTTP 409 if a deal already exists for the application.
+The system SHALL expose `POST /campaigns/{campaign_id}/applications/{application_id}/accept` requiring authentication. It SHALL allow only the campaign `advertiser_id` to call it. It SHALL validate the campaign exists and is not hidden, the application exists, belongs to the campaign, is not hidden, and is in `submitted` status. It SHALL require `creative_text`, `creative_media_type`, and `creative_media_ref`, and accept optional `start_at`, optional `price_ton`, optional `ad_type`, and optional `posting_params`. It SHALL create a deal in `DRAFT` with `source_type = campaign`, set `campaign_id` and `campaign_application_id`, set `channel_id` and `channel_owner_id` from the application, copy `placement_type`, `exclusive_hours`, and `retention_hours` from the accepted application terms, and set the application status to `accepted`. If `start_at` is provided, it SHALL persist as deal `scheduled_at`. If `price_ton` is omitted, it SHALL default to campaign `budget_ton` and reject acceptance when both are missing or invalid. If `ad_type` is omitted, it SHALL default to the application placement term.
 
-#### Scenario: Advertiser accepts application under limit
-- **WHEN** the advertiser accepts a submitted campaign application and the campaign has remaining acceptance capacity
-- **THEN** the application becomes `accepted` and a `DRAFT` deal is created
-
-#### Scenario: Future accepts blocked after limit reached
-- **WHEN** an advertiser attempts to accept another offer after accepted count equals `max_acceptances`
-- **THEN** the response is HTTP 409 and no additional deal is created
+#### Scenario: Campaign acceptance derives terms and scheduling
+- **WHEN** the advertiser accepts a submitted campaign application with creative payload and `start_at`
+- **THEN** the created deal stores application-derived placement/exclusive/retention terms and `scheduled_at` from `start_at`
 
 ### Requirement: Campaign acceptance limit enforcement is transaction-safe
 The system SHALL enforce `max_acceptances` for campaign-offer acceptance in a single database transaction with campaign-level row locking. The accepted-count check and deal creation SHALL occur in the same locked transaction scope so parallel accept requests cannot exceed the configured limit.
@@ -101,13 +97,13 @@ When an acceptance causes campaign accepted count to reach `max_acceptances`, th
 
 ### Requirement: Update deal draft proposal
 The system SHALL expose `PATCH /deals/{id}` requiring authentication. It SHALL allow updates only when the deal state is `DRAFT` or `NEGOTIATION`. It SHALL enforce role-based field edits as follows:
-- For `source_type = listing`: both parties MAY edit `creative_text`, `creative_media_type`, `creative_media_ref`, and `posting_params`; `price_ton`, `ad_type`, `placement_type`, `exclusive_hours`, and `retention_hours` SHALL remain locked.
-- For `source_type = campaign`: the advertiser MAY edit `price_ton`, `ad_type`, `creative_*`, and `posting_params`; the channel owner MAY edit only `creative_*` and `posting_params`.
-Each update SHALL write a `deal_events` row with `event_type = proposal` and the changed fields in `payload`. If the deal is in `DRAFT`, the update SHALL transition it to `NEGOTIATION` via `apply_transition()`.
+- For `source_type = listing`: both parties MAY edit `creative_text`, `creative_media_type`, `creative_media_ref`, `posting_params`, and `start_at`; `price_ton`, `ad_type`, `placement_type`, `exclusive_hours`, and `retention_hours` SHALL remain locked.
+- For `source_type = campaign`: the advertiser MAY edit `price_ton`, `ad_type`, `creative_*`, `posting_params`, and `start_at`; the channel owner MAY edit `creative_*`, `posting_params`, and `start_at`.
+Each update SHALL write a `deal_events` row with `event_type = proposal` and the changed fields in `payload`. If `start_at` is updated, the system SHALL persist it as `scheduled_at`. If the deal is in `DRAFT`, the update SHALL transition it to `NEGOTIATION` via `apply_transition()`.
 
-#### Scenario: Listing-sourced structured terms cannot be edited
-- **WHEN** either participant attempts to update `placement_type`, `exclusive_hours`, or `retention_hours` on a listing-sourced deal in `DRAFT` or `NEGOTIATION`
-- **THEN** the request is rejected and the deal remains unchanged
+#### Scenario: Start time is negotiable in draft and negotiation
+- **WHEN** either deal participant updates `start_at` on a deal in `DRAFT` or `NEGOTIATION`
+- **THEN** the deal proposal is updated with new `scheduled_at` and proposal event payload includes the changed start time
 
 ### Requirement: Accept deal proposal
 The system SHALL expose `POST /deals/{id}/accept` requiring authentication. It SHALL allow acceptance only when the deal state is `DRAFT` or `NEGOTIATION`, and only by the counterparty to the most recent proposal. It SHALL finalize the deal in `ACCEPTED` using `apply_transition()` and SHALL block further edits after acceptance.
@@ -157,3 +153,4 @@ The system SHALL expose `POST /deals/{id}/creative/request-edits` requiring auth
 #### Scenario: Advertiser requests edits
 - **WHEN** the advertiser requests edits for a `CREATIVE_SUBMITTED` deal
 - **THEN** the deal transitions to `CREATIVE_CHANGES_REQUESTED`
+

@@ -129,6 +129,14 @@ def _parse_int(value: str | None, *, field: str, minimum: int | None = None) -> 
     return parsed
 
 
+def _normalize_datetime(value):
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _encode_cursor(created_at: datetime, source: str, event_id: int) -> str:
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
@@ -173,6 +181,9 @@ def _serialize_payload(payload: dict) -> dict:
     for key, value in payload.items():
         if isinstance(value, Decimal):
             serialized[key] = str(value)
+        elif isinstance(value, datetime):
+            normalized = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+            serialized[key] = normalized.isoformat()
         else:
             serialized[key] = value
     return serialized
@@ -414,6 +425,12 @@ def update_deal(
         updates["price_ton"] = _validate_price(payload.price_ton)
     if payload.ad_type is not None:
         updates["ad_type"] = _require_non_empty(payload.ad_type, field="ad_type")
+    if hasattr(payload, "model_fields_set"):
+        fields_set = payload.model_fields_set
+    else:
+        fields_set = payload.__fields_set__
+    if "start_at" in fields_set:
+        updates["scheduled_at"] = _normalize_datetime(payload.start_at)
     if payload.placement_type is not None:
         updates["placement_type"] = payload.placement_type
     if payload.exclusive_hours is not None:
@@ -450,11 +467,15 @@ def update_deal(
     deal.updated_at = datetime.now(timezone.utc)
     db.add(deal)
 
+    event_updates = dict(updates)
+    if "scheduled_at" in event_updates:
+        event_updates["start_at"] = event_updates.pop("scheduled_at")
+
     proposal_event = DealEvent(
         deal_id=deal.id,
         actor_id=current_user.id,
         event_type="proposal",
-        payload=_serialize_payload(updates),
+        payload=_serialize_payload(event_updates),
     )
     db.add(proposal_event)
 

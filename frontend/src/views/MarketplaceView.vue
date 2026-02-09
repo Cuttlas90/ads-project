@@ -76,6 +76,8 @@
             placeholder="Write your ad copy"
           ></textarea>
         </label>
+        <TgInput v-model="dealForm.start_at" label="Start at" type="datetime-local" />
+        <p v-if="expectedEndAt" class="marketplace__expected-end">Expected end: {{ expectedEndAt }}</p>
         <label class="marketplace__field">
           <span>Media type</span>
           <select v-model="dealForm.creative_media_type" class="marketplace__select">
@@ -141,6 +143,7 @@ const dealForm = reactive({
   listing_id: 0,
   listing_format_id: 0,
   creative_text: '',
+  start_at: '',
   creative_media_type: 'image',
   creative_media_ref: '',
 })
@@ -158,6 +161,22 @@ const toNumber = (value: string) => {
   if (Number.isNaN(parsed)) return undefined
   return parsed
 }
+
+const toIsoDateTime = (value: string) => {
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  const parsed = new Date(trimmed)
+  if (Number.isNaN(parsed.getTime())) return undefined
+  return parsed.toISOString()
+}
+
+const expectedEndAt = computed(() => {
+  if (!selectedFormat.value || !dealForm.start_at.trim()) return ''
+  const parsed = new Date(dealForm.start_at)
+  if (Number.isNaN(parsed.getTime())) return ''
+  const end = new Date(parsed.getTime() + selectedFormat.value.retention_hours * 60 * 60 * 1000)
+  return end.toLocaleString()
+})
 
 const loadListings = async () => {
   loadingListings.value = true
@@ -183,6 +202,7 @@ const loadListings = async () => {
 
 const resetDealCreative = () => {
   dealForm.creative_text = ''
+  dealForm.start_at = ''
   dealForm.creative_media_ref = ''
   dealForm.creative_media_type = 'image'
   uploadStatus.value = ''
@@ -247,6 +267,7 @@ const createDeal = async () => {
     await listingsService.createDealFromListing(dealForm.listing_id, {
       listing_format_id: dealForm.listing_format_id,
       creative_text: dealForm.creative_text.trim(),
+      start_at: toIsoDateTime(dealForm.start_at),
       creative_media_type: dealForm.creative_media_type,
       creative_media_ref: dealForm.creative_media_ref.trim(),
     })
@@ -340,6 +361,12 @@ onMounted(() => {
 .marketplace__modal {
   display: grid;
   gap: 0.75rem;
+}
+
+.marketplace__expected-end {
+  margin: 0;
+  color: var(--app-ink-muted);
+  font-size: 0.85rem;
 }
 
 .marketplace__upload {

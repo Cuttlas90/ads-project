@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from sqlalchemy import and_, func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, get_settings_dep
 from app.models.campaign_application import CampaignApplication
 from app.models.campaign_request import CampaignLifecycleState, CampaignRequest
 from app.models.channel import Channel
@@ -23,8 +24,10 @@ from app.schemas.campaigns import (
     CampaignApplicationStatsSummary,
     CampaignApplicationSummary,
 )
-from app.schemas.deals import DealCreateFromCampaignAccept, DealSummary
+from app.schemas.deals import DealCreateFromCampaignAccept, DealCreativeUploadResponse, DealSummary
 from app.schemas.channel import ChannelRole
+from app.settings import Settings
+from shared.telegram.bot_api import BotApiService, TelegramApiError, TelegramConfigError
 
 router = APIRouter(prefix="/campaigns", tags=["campaign-applications"])
 
@@ -32,6 +35,7 @@ DEFAULT_PAGE = 1
 DEFAULT_PAGE_SIZE = 20
 PREMIUM_RATIO_KEY = "premium_ratio"
 ALLOWED_MEDIA_TYPES = {"image", "video"}
+ALLOWED_PLACEMENT_TYPES = {"post", "story"}
 
 
 def _parse_int(value: str | None, *, field: str, minimum: int | None = None) -> int | None:
@@ -59,6 +63,31 @@ def _require_media_type(value: str | None) -> str:
     return normalized
 
 
+def _require_placement_type(value: str | None) -> str:
+    normalized = _require_non_empty(value, field="proposed_placement_type").lower()
+    if normalized not in ALLOWED_PLACEMENT_TYPES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid proposed_placement_type")
+    return normalized
+
+
+def _normalize_datetime(value):
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _resolve_price_ton(value) -> Decimal:
+    try:
+        normalized = Decimal(value)
+    except (InvalidOperation, TypeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid price_ton")
+    if normalized <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid price_ton")
+    return normalized
+
+
 def _deal_summary(deal: Deal) -> DealSummary:
     return DealSummary(
         id=deal.id,
@@ -79,6 +108,12 @@ def _deal_summary(deal: Deal) -> DealSummary:
         creative_media_type=deal.creative_media_type,
         creative_media_ref=deal.creative_media_ref,
         posting_params=deal.posting_params,
+        scheduled_at=deal.scheduled_at,
+        verification_window_hours=deal.verification_window_hours,
+        posted_at=deal.posted_at,
+        posted_message_id=deal.posted_message_id,
+        posted_content_hash=deal.posted_content_hash,
+        verified_at=deal.verified_at,
         state=deal.state,
         created_at=deal.created_at,
         updated_at=deal.updated_at,
@@ -159,6 +194,9 @@ def _application_summary(application: CampaignApplication) -> CampaignApplicatio
         channel_id=application.channel_id,
         owner_id=application.owner_id,
         proposed_format_label=application.proposed_format_label,
+        proposed_placement_type=application.proposed_placement_type,
+        proposed_exclusive_hours=application.proposed_exclusive_hours,
+        proposed_retention_hours=application.proposed_retention_hours,
         message=application.message,
         status=application.status,
         hidden_at=application.hidden_at,
@@ -177,8 +215,19 @@ def apply_to_campaign(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> CampaignApplicationSummary:
-    if payload.proposed_format_label is None or not payload.proposed_format_label.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid proposed_format_label")
+    proposed_placement_type = _require_placement_type(payload.proposed_placement_type)
+    proposed_exclusive_hours = payload.proposed_exclusive_hours
+    proposed_retention_hours = payload.proposed_retention_hours
+    if proposed_exclusive_hours < 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid proposed_exclusive_hours")
+    if proposed_retention_hours < 1:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid proposed_retention_hours")
+
+    proposed_format_label = (
+        payload.proposed_format_label.strip()
+        if payload.proposed_format_label is not None and payload.proposed_format_label.strip()
+        else proposed_placement_type
+    )
 
     campaign = db.exec(select(CampaignRequest).where(CampaignRequest.id == campaign_id)).first()
     if campaign is None:
@@ -198,7 +247,10 @@ def apply_to_campaign(
         campaign_id=campaign.id,
         channel_id=channel.id,
         owner_id=current_user.id,
-        proposed_format_label=payload.proposed_format_label.strip(),
+        proposed_format_label=proposed_format_label,
+        proposed_placement_type=proposed_placement_type,
+        proposed_exclusive_hours=proposed_exclusive_hours,
+        proposed_retention_hours=proposed_retention_hours,
         message=payload.message,
         status="submitted",
     )
@@ -292,6 +344,9 @@ def list_campaign_applications(
                 channel_username=channel_username,
                 channel_title=channel_title,
                 proposed_format_label=application.proposed_format_label,
+                proposed_placement_type=application.proposed_placement_type,
+                proposed_exclusive_hours=application.proposed_exclusive_hours,
+                proposed_retention_hours=application.proposed_retention_hours,
                 status=application.status,
                 created_at=application.created_at,
                 stats=stats,
@@ -303,6 +358,62 @@ def list_campaign_applications(
         page_size=page_size,
         total=total,
         items=items,
+    )
+
+
+@router.post(
+    "/{campaign_id}/applications/{application_id}/creative/upload",
+    response_model=DealCreativeUploadResponse,
+)
+def upload_campaign_application_creative_media(
+    campaign_id: int,
+    application_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings_dep),
+) -> DealCreativeUploadResponse:
+    campaign = db.exec(select(CampaignRequest).where(CampaignRequest.id == campaign_id)).first()
+    if campaign is None or campaign.lifecycle_state == CampaignLifecycleState.HIDDEN.value:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+    if campaign.advertiser_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    application = db.exec(select(CampaignApplication).where(CampaignApplication.id == application_id)).first()
+    if (
+        application is None
+        or application.campaign_id != campaign_id
+        or application.hidden_at is not None
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
+    if application.status != "submitted":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Application is not submitted")
+
+    content_type = file.content_type or ""
+    if content_type.startswith("image/"):
+        media_type = "image"
+    elif content_type.startswith("video/"):
+        media_type = "video"
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid creative_media_type")
+
+    content = file.file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty upload")
+
+    service = BotApiService(settings)
+    try:
+        result = service.upload_media(
+            media_type=media_type,
+            filename=file.filename or f"creative.{media_type}",
+            content=content,
+        )
+    except (TelegramApiError, TelegramConfigError) as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to upload media") from exc
+
+    return DealCreativeUploadResponse(
+        creative_media_ref=result["file_id"],
+        creative_media_type=result["media_type"],
     )
 
 
@@ -375,14 +486,20 @@ def accept_campaign_application(
             db.commit()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Campaign acceptance limit reached")
 
-    price_ton = payload.price_ton
-    if price_ton is None or price_ton < 0:
+    price_source = payload.price_ton if payload.price_ton is not None else campaign.budget_ton
+    if price_source is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid price_ton")
+    price_ton = _resolve_price_ton(price_source)
 
-    ad_type = _require_non_empty(payload.ad_type, field="ad_type")
+    ad_type = (
+        _require_non_empty(payload.ad_type, field="ad_type")
+        if payload.ad_type is not None
+        else application.proposed_format_label
+    )
     creative_text = _require_non_empty(payload.creative_text, field="creative_text")
     creative_media_type = _require_media_type(payload.creative_media_type)
     creative_media_ref = _require_non_empty(payload.creative_media_ref, field="creative_media_ref")
+    scheduled_at = _normalize_datetime(payload.start_at)
 
     deal = Deal(
         source_type=DealSourceType.CAMPAIGN.value,
@@ -393,10 +510,15 @@ def accept_campaign_application(
         campaign_application_id=application.id,
         price_ton=price_ton,
         ad_type=ad_type,
+        placement_type=application.proposed_placement_type,
+        exclusive_hours=application.proposed_exclusive_hours,
+        retention_hours=application.proposed_retention_hours,
         creative_text=creative_text,
         creative_media_type=creative_media_type,
         creative_media_ref=creative_media_ref,
+        scheduled_at=scheduled_at,
         posting_params=payload.posting_params,
+        verification_window_hours=application.proposed_retention_hours,
     )
     db.add(deal)
     db.flush()
@@ -411,9 +533,13 @@ def accept_campaign_application(
         payload={
             "price_ton": str(price_ton),
             "ad_type": ad_type,
+            "placement_type": application.proposed_placement_type,
+            "exclusive_hours": application.proposed_exclusive_hours,
+            "retention_hours": application.proposed_retention_hours,
             "creative_text": creative_text,
             "creative_media_type": creative_media_type,
             "creative_media_ref": creative_media_ref,
+            "start_at": scheduled_at.isoformat() if scheduled_at else None,
             "posting_params": payload.posting_params,
         },
     )

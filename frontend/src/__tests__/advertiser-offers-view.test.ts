@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   offersMock: vi.fn(),
   acceptMock: vi.fn(),
+  uploadMock: vi.fn(),
   pushMock: vi.fn(),
 }))
 
@@ -22,6 +23,7 @@ vi.mock('../services/campaigns', () => ({
     offers: mocks.offersMock,
     apply: vi.fn(),
     accept: mocks.acceptMock,
+    uploadCreative: mocks.uploadMock,
     get: vi.fn(),
   },
 }))
@@ -45,6 +47,9 @@ describe('AdvertiserOffersView inbox and accept redirect', () => {
           channel_title: 'Newest Channel',
           owner_id: 88,
           proposed_format_label: 'Post',
+          proposed_placement_type: 'post',
+          proposed_exclusive_hours: 1,
+          proposed_retention_hours: 24,
           status: 'submitted',
           created_at: '2026-02-09T12:00:00Z',
         },
@@ -57,12 +62,19 @@ describe('AdvertiserOffersView inbox and accept redirect', () => {
           channel_title: 'Older Channel',
           owner_id: 77,
           proposed_format_label: 'Story',
+          proposed_placement_type: 'story',
+          proposed_exclusive_hours: 1,
+          proposed_retention_hours: 24,
           status: 'submitted',
           created_at: '2026-02-09T10:00:00Z',
         },
       ],
     })
     mocks.acceptMock.mockResolvedValue({ id: 41 })
+    mocks.uploadMock.mockResolvedValue({
+      creative_media_ref: 'file-ref',
+      creative_media_type: 'image',
+    })
   })
 
   it('renders newest-first offers and redirects to deal detail after accept', async () => {
@@ -91,10 +103,21 @@ describe('AdvertiserOffersView inbox and accept redirect', () => {
     await acceptButton!.trigger('click')
     await flushPromises()
 
-    await wrapper.find('input[type="number"]').setValue('15')
     await wrapper.find('input[placeholder="Ad copy"]').setValue('Draft text')
-    await wrapper.find('input[placeholder="image or video"]').setValue('image')
-    await wrapper.find('input[placeholder="Telegram file_id/ref"]').setValue('file-ref')
+    await wrapper.find('select.offers__select').setValue('video')
+
+    const file = new File(['img'], 'creative.jpg', { type: 'image/jpeg' })
+    const fileInput = wrapper.find('input[type="file"]')
+    Object.defineProperty(fileInput.element, 'files', {
+      value: [file],
+      configurable: true,
+    })
+    await fileInput.trigger('change')
+    await flushPromises()
+    await flushPromises()
+
+    expect(mocks.uploadMock).toHaveBeenCalledTimes(1)
+    expect(mocks.uploadMock).toHaveBeenCalledWith(9, 52, file)
 
     const createDealButton = wrapper
       .findAll('button')
@@ -104,9 +127,8 @@ describe('AdvertiserOffersView inbox and accept redirect', () => {
     await flushPromises()
 
     expect(mocks.acceptMock).toHaveBeenCalledWith(9, 52, {
-      price_ton: '15',
-      ad_type: 'Post',
       creative_text: 'Draft text',
+      start_at: undefined,
       creative_media_type: 'image',
       creative_media_ref: 'file-ref',
     })

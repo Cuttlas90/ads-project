@@ -22,6 +22,7 @@ from app.models.channel_stats_snapshot import ChannelStatsSnapshot
 from app.models.user import User
 from app.settings import Settings
 from shared.db.base import SQLModel
+import shared.telegram.bot_api as bot_api
 
 BOT_TOKEN = "test-bot-token"
 
@@ -53,7 +54,7 @@ def client(db_engine):
             yield session
 
     def override_get_settings() -> Settings:
-        return Settings(_env_file=None, TELEGRAM_BOT_TOKEN=BOT_TOKEN)
+        return Settings(_env_file=None, TELEGRAM_BOT_TOKEN=BOT_TOKEN, TELEGRAM_MEDIA_CHANNEL_ID=123)
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_settings_dep] = override_get_settings
@@ -222,27 +223,27 @@ def test_advertiser_offers_inbox_scoped_sorted_and_excludes_hidden(
 
     visible_old = client.post(
         f"/campaigns/{advertiser_campaign_id}/apply",
-        json={"channel_id": channel_a, "proposed_format_label": "Post"},
+        json={"channel_id": channel_a, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(456),
     )
     visible_new = client.post(
         f"/campaigns/{advertiser_campaign_id}/apply",
-        json={"channel_id": channel_b, "proposed_format_label": "Story"},
+        json={"channel_id": channel_b, "proposed_format_label": "Story", "proposed_placement_type": "story", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(789),
     )
     hidden_offer = client.post(
         f"/campaigns/{advertiser_campaign_id}/apply",
-        json={"channel_id": channel_c, "proposed_format_label": "Post"},
+        json={"channel_id": channel_c, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(987),
     )
     hidden_campaign_offer = client.post(
         f"/campaigns/{hidden_campaign_id}/apply",
-        json={"channel_id": channel_d, "proposed_format_label": "Story"},
+        json={"channel_id": channel_d, "proposed_format_label": "Story", "proposed_placement_type": "story", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(654),
     )
     other_advertiser_offer = client.post(
         f"/campaigns/{other_advertiser_campaign_id}/apply",
-        json={"channel_id": channel_a, "proposed_format_label": "Post"},
+        json={"channel_id": channel_a, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(456),
     )
     assert visible_old.status_code == 201
@@ -270,6 +271,9 @@ def test_advertiser_offers_inbox_scoped_sorted_and_excludes_hidden(
         visible_old.json()["id"],
     ]
     assert all(item["campaign_id"] == advertiser_campaign_id for item in advertiser_payload["items"])
+    assert advertiser_payload["items"][0]["proposed_placement_type"] == "story"
+    assert advertiser_payload["items"][0]["proposed_exclusive_hours"] == 1
+    assert advertiser_payload["items"][0]["proposed_retention_hours"] == 24
 
     other_advertiser_response = client.get("/campaigns/offers", headers=_auth_headers(999))
     assert other_advertiser_response.status_code == 200
@@ -329,7 +333,7 @@ def test_delete_campaign_cascades_hide_to_related_offers(client: TestClient, db_
 
     apply_response = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(456),
     )
     assert apply_response.status_code == 201
@@ -361,7 +365,7 @@ def test_hidden_campaign_cannot_receive_applications(client: TestClient, db_engi
 
     response = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(456),
     )
     assert response.status_code == 404
@@ -389,7 +393,7 @@ def test_owner_apply_success(client: TestClient, db_engine) -> None:
 
     response = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(456),
     )
 
@@ -397,6 +401,63 @@ def test_owner_apply_success(client: TestClient, db_engine) -> None:
     payload = response.json()
     assert payload["campaign_id"] == campaign_id
     assert payload["status"] == "submitted"
+    assert payload["proposed_placement_type"] == "post"
+    assert payload["proposed_exclusive_hours"] == 1
+    assert payload["proposed_retention_hours"] == 24
+
+
+def test_advertiser_upload_offer_creative_success(client: TestClient, db_engine, monkeypatch) -> None:
+    def fake_post(url: str, data: dict, files: dict):
+        class DummyResponse:
+            status_code = 200
+
+            def json(self) -> dict:
+                return {"ok": True, "result": {"photo": [{"file_id": "campaign-file-1"}]}}
+
+        return DummyResponse()
+
+    monkeypatch.setattr(bot_api.httpx, "post", fake_post)
+
+    campaign_id = _create_campaign(client, user_id=123)
+    channel_id = _create_channel(client, owner_id=456, username="@creativeupload")
+    _mark_channel_verified(db_engine, channel_id)
+    apply_response = client.post(
+        f"/campaigns/{campaign_id}/apply",
+        json={"channel_id": channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
+        headers=_auth_headers(456),
+    )
+    assert apply_response.status_code == 201
+    application_id = apply_response.json()["id"]
+
+    response = client.post(
+        f"/campaigns/{campaign_id}/applications/{application_id}/creative/upload",
+        files={"file": ("photo.jpg", b"data", "image/jpeg")},
+        headers=_auth_headers(123),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["creative_media_ref"] == "campaign-file-1"
+    assert payload["creative_media_type"] == "image"
+
+
+def test_offer_creative_upload_forbidden_for_non_advertiser(client: TestClient, db_engine) -> None:
+    campaign_id = _create_campaign(client, user_id=123)
+    channel_id = _create_channel(client, owner_id=456, username="@creativeforbidden")
+    _mark_channel_verified(db_engine, channel_id)
+    apply_response = client.post(
+        f"/campaigns/{campaign_id}/apply",
+        json={"channel_id": channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
+        headers=_auth_headers(456),
+    )
+    assert apply_response.status_code == 201
+    application_id = apply_response.json()["id"]
+
+    response = client.post(
+        f"/campaigns/{campaign_id}/applications/{application_id}/creative/upload",
+        files={"file": ("photo.jpg", b"data", "image/jpeg")},
+        headers=_auth_headers(999),
+    )
+    assert response.status_code == 403
 
 
 def test_non_owner_apply_forbidden(client: TestClient, db_engine) -> None:
@@ -406,7 +467,7 @@ def test_non_owner_apply_forbidden(client: TestClient, db_engine) -> None:
 
     response = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(789),
     )
 
@@ -419,7 +480,7 @@ def test_apply_unverified_channel_rejected(client: TestClient) -> None:
 
     response = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(456),
     )
 
@@ -434,7 +495,7 @@ def test_advertiser_lists_applications_success(client: TestClient, db_engine) ->
 
     apply_response = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(456),
     )
     assert apply_response.status_code == 201
@@ -462,7 +523,7 @@ def test_non_advertiser_listing_forbidden(client: TestClient, db_engine) -> None
 
     apply_response = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(456),
     )
     assert apply_response.status_code == 201
@@ -482,14 +543,14 @@ def test_duplicate_apply_conflict(client: TestClient, db_engine) -> None:
 
     response = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(456),
     )
     assert response.status_code == 201
 
     response = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(456),
     )
     assert response.status_code == 409
@@ -508,7 +569,7 @@ def test_closed_by_limit_blocks_future_applications(client: TestClient, db_engin
 
     first_apply = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": first_channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": first_channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(456),
     )
     assert first_apply.status_code == 201
@@ -529,7 +590,7 @@ def test_closed_by_limit_blocks_future_applications(client: TestClient, db_engin
 
     blocked_apply = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": second_channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": second_channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(789),
     )
     assert blocked_apply.status_code == 404
@@ -549,7 +610,7 @@ def test_limit_reach_auto_rejects_remaining_submitted_offers(client: TestClient,
 
     first_apply = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": first_channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": first_channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(456),
     )
     assert first_apply.status_code == 201
@@ -557,7 +618,7 @@ def test_limit_reach_auto_rejects_remaining_submitted_offers(client: TestClient,
 
     second_apply = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": second_channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": second_channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(789),
     )
     assert second_apply.status_code == 201
@@ -596,12 +657,12 @@ def test_hidden_offers_are_excluded_from_offer_listing(client: TestClient, db_en
 
     first_apply = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": first_channel_id, "proposed_format_label": "Post"},
+        json={"channel_id": first_channel_id, "proposed_format_label": "Post", "proposed_placement_type": "post", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(456),
     )
     second_apply = client.post(
         f"/campaigns/{campaign_id}/apply",
-        json={"channel_id": second_channel_id, "proposed_format_label": "Story"},
+        json={"channel_id": second_channel_id, "proposed_format_label": "Story", "proposed_placement_type": "story", "proposed_exclusive_hours": 1, "proposed_retention_hours": 24},
         headers=_auth_headers(789),
     )
     assert first_apply.status_code == 201

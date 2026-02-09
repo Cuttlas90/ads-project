@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timezone
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
@@ -95,6 +97,14 @@ def _require_media_type(value: str | None) -> str:
     if normalized not in ALLOWED_MEDIA_TYPES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid creative_media_type")
     return normalized
+
+
+def _normalize_datetime(value):
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _deal_summary(deal: Deal) -> DealSummary:
@@ -342,6 +352,7 @@ def create_deal_from_listing(
     creative_text = _require_non_empty(payload.creative_text, field="creative_text")
     creative_media_type = _require_media_type(payload.creative_media_type)
     creative_media_ref = _require_non_empty(payload.creative_media_ref, field="creative_media_ref")
+    scheduled_at = _normalize_datetime(payload.start_at)
 
     deal = Deal(
         source_type=DealSourceType.LISTING.value,
@@ -358,6 +369,7 @@ def create_deal_from_listing(
         creative_text=creative_text,
         creative_media_type=creative_media_type,
         creative_media_ref=creative_media_ref,
+        scheduled_at=scheduled_at,
         posting_params=payload.posting_params,
         verification_window_hours=listing_format.retention_hours,
     )
@@ -377,6 +389,7 @@ def create_deal_from_listing(
             "creative_text": creative_text,
             "creative_media_type": creative_media_type,
             "creative_media_ref": creative_media_ref,
+            "start_at": scheduled_at.isoformat() if scheduled_at else None,
             "posting_params": payload.posting_params,
         },
     )

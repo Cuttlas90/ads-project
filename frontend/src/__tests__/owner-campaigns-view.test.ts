@@ -65,6 +65,9 @@ describe('OwnerCampaignsView apply channel picker', () => {
       channel_id: 10,
       owner_id: 33,
       proposed_format_label: 'Post',
+      proposed_placement_type: 'post',
+      proposed_exclusive_hours: 1,
+      proposed_retention_hours: 24,
       message: null,
       status: 'submitted',
       created_at: '2026-02-09T00:00:00Z',
@@ -98,12 +101,24 @@ describe('OwnerCampaignsView apply channel picker', () => {
     expect(mocks.applyMock).toHaveBeenNthCalledWith(
       1,
       77,
-      expect.objectContaining({ channel_id: 10, proposed_format_label: 'Post' }),
+      expect.objectContaining({
+        channel_id: 10,
+        proposed_format_label: 'Post',
+        proposed_placement_type: 'post',
+        proposed_exclusive_hours: 0,
+        proposed_retention_hours: 24,
+      }),
     )
     expect(mocks.applyMock).toHaveBeenNthCalledWith(
       2,
       77,
-      expect.objectContaining({ channel_id: 20, proposed_format_label: 'Post' }),
+      expect.objectContaining({
+        channel_id: 20,
+        proposed_format_label: 'Post',
+        proposed_placement_type: 'post',
+        proposed_exclusive_hours: 0,
+        proposed_retention_hours: 24,
+      }),
     )
   })
 })

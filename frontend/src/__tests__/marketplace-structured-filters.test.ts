@@ -1,4 +1,4 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { RouterLinkStub, flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -32,6 +32,7 @@ describe('MarketplaceView structured filters and display', () => {
       global: {
         stubs: {
           teleport: true,
+          RouterLink: RouterLinkStub,
         },
       },
     })
@@ -50,6 +51,7 @@ describe('MarketplaceView structured filters and display', () => {
       items: [
         {
           listing_id: 90,
+          channel_id: 12,
           channel_username: 'alpha',
           channel_title: 'Alpha',
           formats: [
@@ -147,6 +149,7 @@ describe('MarketplaceView structured filters and display', () => {
     expect(mocks.createDealFromListingMock).toHaveBeenCalledWith(90, {
       listing_format_id: 11,
       creative_text: 'Launch copy',
+      start_at: undefined,
       creative_media_type: 'image',
       creative_media_ref: 'file-123',
     })

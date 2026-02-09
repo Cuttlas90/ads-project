@@ -78,15 +78,11 @@ Both endpoints SHALL accept multipart media (`image` or `video`), upload to Tele
 - **THEN** the response includes `creative_media_ref` set to the Telegram `file_id` and `creative_media_type`
 
 ### Requirement: Start deal flow uses upload-first creative capture
-The marketplace Start deal UI SHALL require creative media upload before submitting deal creation. It SHALL provide a multiline creative text input, an explicit media type selector (`image` or `video`), and a media file picker. It SHALL NOT require manual entry of Telegram `file_id`. On successful upload, it SHALL use returned `creative_media_ref` and `creative_media_type` in the subsequent `POST /listings/{listing_id}/deals` request, which SHALL continue creating the deal in `DRAFT`.
+The marketplace Start deal UI SHALL require creative media upload before submitting deal creation. It SHALL provide a multiline creative text input, an explicit media type selector (`image` or `video`), a media file picker, and a start datetime input (`start_at`). It SHALL NOT require manual entry of Telegram `file_id`. On successful upload, it SHALL use returned `creative_media_ref` and `creative_media_type` in the subsequent `POST /listings/{listing_id}/deals` request and include selected `start_at` when provided.
 
-#### Scenario: Start deal is blocked until upload succeeds
-- **WHEN** the user has not completed a successful media upload in the Start deal modal
-- **THEN** the UI prevents sending `POST /listings/{listing_id}/deals`
-
-#### Scenario: Deal creation uses upload response fields
-- **WHEN** media upload succeeds and the user starts a deal
-- **THEN** the UI sends `creative_media_ref` and `creative_media_type` from the upload response in `POST /listings/{listing_id}/deals`
+#### Scenario: Listing start deal sends start datetime
+- **WHEN** a user uploads media, enters creative text, and selects start datetime in Start deal modal
+- **THEN** the UI submits `start_at` with creative fields in `POST /listings/{listing_id}/deals`
 
 ### Requirement: Creative approval FSM transitions
 The system SHALL include the explicit DealState `CREATIVE_CHANGES_REQUESTED`. It SHALL allow:
@@ -243,18 +239,18 @@ The UI SHALL render advertiser campaign creation and advertiser campaign list on
 - **THEN** the campaign appears in the workspace list below the create form without navigating to another page
 
 ### Requirement: Owner campaigns page and apply channel selection
-The UI SHALL provide an owner campaigns page that lists discoverable active campaigns. Applying to a campaign SHALL require selecting one channel from the authenticated user's owned verified channels. If no owned verified channels exist, the UI SHALL block submission and show guidance to verify a channel first.
+The UI SHALL provide an owner campaigns page that lists discoverable active campaigns. Applying to a campaign SHALL require selecting one channel from the authenticated user's owned verified channels and SHALL capture structured proposal terms: `placement_type`, `exclusive_hours`, and `retention_hours`. If no owned verified channels exist, the UI SHALL block submission and show guidance to verify a channel first.
 
-#### Scenario: Owner apply uses verified channel picker
+#### Scenario: Owner apply submits structured terms
 - **WHEN** an owner applies to a campaign
-- **THEN** the apply action submits a selected owned verified `channel_id`
+- **THEN** the UI submits selected channel plus structured placement/exclusive/retention terms
 
 ### Requirement: Advertiser aggregated offers inbox page
-The UI SHALL provide one advertiser offers page that lists offers across all advertiser campaigns in newest-first order. Each row SHALL expose campaign context and an action to accept the offer by submitting required deal fields (`price_ton`, `ad_type`, `creative_text`, `creative_media_type`, `creative_media_ref`).
+The UI SHALL provide one advertiser offers page that lists offers across all advertiser campaigns in newest-first order. Each row SHALL expose campaign and proposal context and an action to accept the offer by submitting required creative fields and optional start datetime. The accept UI SHALL NOT require manual `ad_type` input and SHALL NOT require manual `price_ton` input when campaign defaults are available.
 
-#### Scenario: Advertiser reviews newest offers first
-- **WHEN** an advertiser opens offers page
-- **THEN** offers are presented in newest-first order with accept action available per row
+#### Scenario: Advertiser accepts offer without duplicate term fields
+- **WHEN** advertiser accepts an offer from the aggregated inbox
+- **THEN** the accept payload includes creative fields and optional `start_at` without requiring manual ad type or price entry
 
 ### Requirement: Post-accept redirect to deal detail
 After successful offer acceptance, the UI SHALL navigate immediately to `/deals/:id` using the created deal id from accept response.

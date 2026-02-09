@@ -72,8 +72,7 @@ class Deal(SQLModel, table=True):
         CheckConstraint(
             "(source_type = 'listing' AND placement_type IS NOT NULL "
             "AND exclusive_hours IS NOT NULL AND retention_hours IS NOT NULL) OR "
-            "(source_type = 'campaign' AND placement_type IS NULL "
-            "AND exclusive_hours IS NULL AND retention_hours IS NULL)",
+            "(source_type = 'campaign')",
             name="ck_deals_listing_terms",
         ),
     )

@@ -12,21 +12,24 @@ class DealCreateFromListing(BaseModel):
     creative_text: str
     creative_media_type: str
     creative_media_ref: str
+    start_at: datetime | None = None
     posting_params: dict | list | None = None
 
 
 class DealCreateFromCampaignAccept(BaseModel):
-    price_ton: Decimal
-    ad_type: str
+    price_ton: Decimal | None = None
+    ad_type: str | None = None
     creative_text: str
     creative_media_type: str
     creative_media_ref: str
+    start_at: datetime | None = None
     posting_params: dict | list | None = None
 
 
 class DealUpdate(BaseModel):
     price_ton: Decimal | None = None
     ad_type: str | None = None
+    start_at: datetime | None = None
     placement_type: Literal["post", "story"] | None = None
     exclusive_hours: int | None = Field(default=None, ge=0)
     retention_hours: int | None = Field(default=None, ge=1)

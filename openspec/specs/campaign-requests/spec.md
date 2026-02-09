@@ -4,15 +4,13 @@
 TBD - created by archiving change add-campaign-requests. Update Purpose after archive.
 ## Requirements
 ### Requirement: Campaign request persistence
-The system SHALL persist campaign requests in a `campaign_requests` table with fields `id`, `advertiser_id` (FK to `users.id`), `title` (required), `brief` (required), `budget_usdt` (nullable decimal), `budget_ton` (nullable decimal), `preferred_language` (nullable), `start_at` (nullable timestamp), `end_at` (nullable timestamp), `min_subscribers` (nullable int), `min_avg_views` (nullable int), `lifecycle_state` (required enum: `active`, `hidden`, `closed_by_limit`), `max_acceptances` (required int, default `10`, minimum `1`), `hidden_at` (nullable timestamp), `is_active` (legacy compatibility flag), `created_at`, and `updated_at`. It SHALL index `advertiser_id` and SHALL support filtering by lifecycle state for backend queries. Budget fields SHALL be display-only and SHALL NOT enforce payment or escrow behavior.
+The system SHALL persist campaign requests in a `campaign_requests` table with fields `id`, `advertiser_id` (FK to `users.id`), `title` (required), `brief` (required), `budget_usdt` (nullable decimal), `budget_ton` (nullable decimal), `preferred_language` (nullable), `start_at` (nullable timestamp), `end_at` (nullable timestamp), `min_subscribers` (nullable int), `min_avg_views` (nullable int), `lifecycle_state` (required enum: `active`, `hidden`, `closed_by_limit`), `max_acceptances` (required int, default `10`, minimum `1`), `hidden_at` (nullable timestamp), `is_active` (legacy compatibility flag), `created_at`, and `updated_at`. It SHALL index `advertiser_id` and SHALL support filtering by lifecycle state for backend queries.
 
-#### Scenario: Campaign request stored with defaults
-- **WHEN** an authenticated user creates a campaign request with `title` and `brief`
-- **THEN** the request is stored with `advertiser_id` set to that user, `lifecycle_state = active`, and `max_acceptances = 10`
+For campaign-driven deal acceptance, when explicit deal `price_ton` is omitted in acceptance payload, the system SHALL treat campaign `budget_ton` as the default accepted deal price source.
 
-#### Scenario: Hidden campaign marks compatibility flag
-- **WHEN** a campaign lifecycle transitions to `hidden` or `closed_by_limit`
-- **THEN** `is_active` is set to `false` for compatibility with legacy inactive checks
+#### Scenario: Campaign budget can default accepted deal price
+- **WHEN** an advertiser accepts a campaign application without sending `price_ton`
+- **THEN** campaign `budget_ton` is used as the deal price source
 
 ### Requirement: Create campaign request endpoint
 The system SHALL expose `POST /campaigns` requiring authentication. It SHALL accept `title` and `brief` plus optional `budget_usdt`, `budget_ton`, `preferred_language`, `start_at`, `end_at`, `min_subscribers`, `min_avg_views`, and `max_acceptances`. It SHALL set `advertiser_id` to the authenticated user, validate non-empty `title`/`brief`, validate budgets are `>= 0` when provided, validate `end_at > start_at` when both are provided, and validate `max_acceptances >= 1` when provided. It SHALL default `max_acceptances` to `10` and initialize `lifecycle_state = active`. It SHALL return HTTP 201 with the created campaign request. It SHALL return HTTP 400 for validation errors.
@@ -75,3 +73,4 @@ Each `GET /campaigns/discover` item SHALL include fields required to evaluate an
 #### Scenario: Owner receives campaign screening context
 - **WHEN** an owner loads campaign discovery results
 - **THEN** each campaign item contains screening and budget fields needed before applying
+

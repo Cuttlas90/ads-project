@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import func, or_
+from sqlalchemy import MetaData, Table, func, inspect, literal, or_
 from sqlmodel import Session, select
 
 from app.api.deps import get_current_user, get_db
@@ -112,22 +113,165 @@ def _campaign_discover_item(campaign: CampaignRequest) -> CampaignDiscoverItem:
 
 
 def _campaign_offer_inbox_item(
-    application: CampaignApplication,
-    campaign: CampaignRequest,
-    channel: Channel,
+    *,
+    application_id: int,
+    campaign_id: int,
+    campaign_title: str,
+    channel_id: int,
+    channel_username: str | None,
+    channel_title: str | None,
+    owner_id: int,
+    proposed_format_label: str | None,
+    proposed_placement_type: str | None,
+    proposed_exclusive_hours: int | None,
+    proposed_retention_hours: int | None,
+    status: str | None,
+    created_at: datetime | None,
+    fallback_created_at: datetime | None = None,
 ) -> CampaignOfferInboxItem:
+    normalized_label = (proposed_format_label or "").strip()
+    normalized_placement = (proposed_placement_type or "").strip().lower()
+    if normalized_placement not in {"post", "story"}:
+        normalized_placement = "story" if "story" in normalized_label.lower() else "post"
+    if not normalized_label:
+        normalized_label = "Story" if normalized_placement == "story" else "Post"
+
+    try:
+        normalized_exclusive = int(proposed_exclusive_hours) if proposed_exclusive_hours is not None else 0
+    except (TypeError, ValueError):
+        normalized_exclusive = 0
+    if normalized_exclusive < 0:
+        normalized_exclusive = 0
+
+    try:
+        normalized_retention = int(proposed_retention_hours) if proposed_retention_hours is not None else 24
+    except (TypeError, ValueError):
+        normalized_retention = 24
+    if normalized_retention < 1:
+        normalized_retention = 24
+
+    normalized_status = (status or "").strip() or "submitted"
+    normalized_created_at = created_at or fallback_created_at or datetime.now(timezone.utc)
+
     return CampaignOfferInboxItem(
-        application_id=application.id,
-        campaign_id=campaign.id,
-        campaign_title=campaign.title,
-        channel_id=application.channel_id,
-        channel_username=channel.username,
-        channel_title=channel.title,
-        owner_id=application.owner_id,
-        proposed_format_label=application.proposed_format_label,
-        status=application.status,
-        created_at=application.created_at,
+        application_id=application_id,
+        campaign_id=campaign_id,
+        campaign_title=campaign_title,
+        channel_id=channel_id,
+        channel_username=channel_username,
+        channel_title=channel_title,
+        owner_id=owner_id,
+        proposed_format_label=normalized_label,
+        proposed_placement_type=normalized_placement,
+        proposed_exclusive_hours=normalized_exclusive,
+        proposed_retention_hours=normalized_retention,
+        status=normalized_status,
+        created_at=normalized_created_at,
     )
+
+
+def _campaign_applications_have_structured_terms(db: Session) -> bool:
+    inspector = inspect(db.get_bind())
+    column_names = {column["name"] for column in inspector.get_columns("campaign_applications")}
+    required = {"proposed_placement_type", "proposed_exclusive_hours", "proposed_retention_hours"}
+    return required.issubset(column_names)
+
+
+def _list_aggregated_offers_legacy(
+    *,
+    db: Session,
+    advertiser_id: int,
+    page: int,
+    page_size: int,
+) -> tuple[int, list[CampaignOfferInboxItem]]:
+    metadata = MetaData()
+    applications = Table("campaign_applications", metadata, autoload_with=db.get_bind())
+    campaigns = CampaignRequest.__table__
+    channels = Channel.__table__
+
+    from_clause = (
+        applications.join(campaigns, campaigns.c.id == applications.c.campaign_id)
+        .join(channels, channels.c.id == applications.c.channel_id)
+    )
+    filters = [
+        campaigns.c.advertiser_id == advertiser_id,
+        campaigns.c.lifecycle_state != CampaignLifecycleState.HIDDEN.value,
+    ]
+    hidden_at_column = applications.c.get("hidden_at")
+    if hidden_at_column is not None:
+        filters.append(hidden_at_column.is_(None))
+
+    count_stmt = select(func.count()).select_from(from_clause).where(*filters)
+    total_result = db.exec(count_stmt).one()
+    total = total_result if isinstance(total_result, int) else total_result[0]
+
+    proposed_format_column = applications.c.get("proposed_format_label")
+    proposed_placement_column = applications.c.get("proposed_placement_type")
+    proposed_exclusive_column = applications.c.get("proposed_exclusive_hours")
+    proposed_retention_column = applications.c.get("proposed_retention_hours")
+    status_column = applications.c.get("status")
+    created_at_column = applications.c.get("created_at")
+
+    offset = (page - 1) * page_size
+    rows_stmt = (
+        select(
+            applications.c.id.label("application_id"),
+            campaigns.c.id.label("campaign_id"),
+            campaigns.c.title.label("campaign_title"),
+            applications.c.channel_id.label("channel_id"),
+            channels.c.username.label("channel_username"),
+            channels.c.title.label("channel_title"),
+            applications.c.owner_id.label("owner_id"),
+            (proposed_format_column if proposed_format_column is not None else literal(None)).label(
+                "proposed_format_label"
+            ),
+            (proposed_placement_column if proposed_placement_column is not None else literal(None)).label(
+                "proposed_placement_type"
+            ),
+            (proposed_exclusive_column if proposed_exclusive_column is not None else literal(None)).label(
+                "proposed_exclusive_hours"
+            ),
+            (proposed_retention_column if proposed_retention_column is not None else literal(None)).label(
+                "proposed_retention_hours"
+            ),
+            (status_column if status_column is not None else literal(None)).label("status"),
+            (created_at_column if created_at_column is not None else literal(None)).label("created_at"),
+            campaigns.c.created_at.label("campaign_created_at"),
+        )
+        .select_from(from_clause)
+        .where(*filters)
+        .order_by(
+            (created_at_column if created_at_column is not None else applications.c.id).desc(),
+            applications.c.id.desc(),
+        )
+        .limit(page_size)
+        .offset(offset)
+    )
+    rows = db.exec(rows_stmt).all()
+
+    items: list[CampaignOfferInboxItem] = []
+    for row in rows:
+        mapping: dict[str, Any] = dict(row._mapping)
+        items.append(
+            _campaign_offer_inbox_item(
+                application_id=mapping["application_id"],
+                campaign_id=mapping["campaign_id"],
+                campaign_title=mapping["campaign_title"],
+                channel_id=mapping["channel_id"],
+                channel_username=mapping["channel_username"],
+                channel_title=mapping["channel_title"],
+                owner_id=mapping["owner_id"],
+                proposed_format_label=mapping.get("proposed_format_label"),
+                proposed_placement_type=mapping.get("proposed_placement_type"),
+                proposed_exclusive_hours=mapping.get("proposed_exclusive_hours"),
+                proposed_retention_hours=mapping.get("proposed_retention_hours"),
+                status=mapping.get("status"),
+                created_at=mapping.get("created_at"),
+                fallback_created_at=mapping.get("campaign_created_at"),
+            )
+        )
+
+    return total, items
 
 
 @router.post("", response_model=CampaignRequestSummary, status_code=status.HTTP_201_CREATED)
@@ -251,6 +395,20 @@ def list_aggregated_offers(
     page = _parse_int(params.get("page"), field="page", minimum=1) or DEFAULT_PAGE
     page_size = _parse_int(params.get("page_size"), field="page_size", minimum=1) or DEFAULT_PAGE_SIZE
 
+    if not _campaign_applications_have_structured_terms(db):
+        total, items = _list_aggregated_offers_legacy(
+            db=db,
+            advertiser_id=current_user.id,
+            page=page,
+            page_size=page_size,
+        )
+        return CampaignOfferInboxPage(
+            page=page,
+            page_size=page_size,
+            total=total,
+            items=items,
+        )
+
     stmt = (
         select(CampaignApplication, CampaignRequest, Channel)
         .join(CampaignRequest, CampaignRequest.id == CampaignApplication.campaign_id)
@@ -276,7 +434,22 @@ def list_aggregated_offers(
         page_size=page_size,
         total=total,
         items=[
-            _campaign_offer_inbox_item(application, campaign, channel)
+            _campaign_offer_inbox_item(
+                application_id=application.id,
+                campaign_id=campaign.id,
+                campaign_title=campaign.title,
+                channel_id=application.channel_id,
+                channel_username=channel.username,
+                channel_title=channel.title,
+                owner_id=application.owner_id,
+                proposed_format_label=application.proposed_format_label,
+                proposed_placement_type=application.proposed_placement_type,
+                proposed_exclusive_hours=application.proposed_exclusive_hours,
+                proposed_retention_hours=application.proposed_retention_hours,
+                status=application.status,
+                created_at=application.created_at,
+                fallback_created_at=campaign.created_at,
+            )
             for application, campaign, channel in rows
         ],
     )

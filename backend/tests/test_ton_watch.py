@@ -134,6 +134,7 @@ def test_watch_idempotent(monkeypatch) -> None:
         assert escrow.state == EscrowState.FUNDED.value
         deal = session.exec(select(Deal).where(Deal.id == escrow.deal_id)).one()
         assert deal.state == DealState.FUNDED.value
+        assert deal.scheduled_at is not None
         assert len(calls) == 1
 
         previous_amount = escrow.received_amount_ton

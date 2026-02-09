@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CampaignRequestCreate(BaseModel):
@@ -69,7 +70,10 @@ class CampaignDiscoverPage(BaseModel):
 
 class CampaignApplicationCreate(BaseModel):
     channel_id: int
-    proposed_format_label: str
+    proposed_format_label: str | None = None
+    proposed_placement_type: Literal["post", "story"]
+    proposed_exclusive_hours: int = Field(ge=0)
+    proposed_retention_hours: int = Field(ge=1)
     message: str | None = None
 
 
@@ -79,6 +83,9 @@ class CampaignApplicationSummary(BaseModel):
     channel_id: int
     owner_id: int
     proposed_format_label: str
+    proposed_placement_type: Literal["post", "story"]
+    proposed_exclusive_hours: int
+    proposed_retention_hours: int
     message: str | None
     status: str
     hidden_at: datetime | None
@@ -97,6 +104,9 @@ class CampaignApplicationListingItem(BaseModel):
     channel_username: str | None
     channel_title: str | None
     proposed_format_label: str
+    proposed_placement_type: Literal["post", "story"]
+    proposed_exclusive_hours: int
+    proposed_retention_hours: int
     status: str
     created_at: datetime
     stats: CampaignApplicationStatsSummary
@@ -118,6 +128,9 @@ class CampaignOfferInboxItem(BaseModel):
     channel_title: str | None
     owner_id: int
     proposed_format_label: str
+    proposed_placement_type: Literal["post", "story"]
+    proposed_exclusive_hours: int
+    proposed_retention_hours: int
     status: str
     created_at: datetime
 

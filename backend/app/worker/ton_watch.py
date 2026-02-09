@@ -154,6 +154,10 @@ def _process_escrow(
             raise ValueError("Deal not found for escrow")
 
         if deal.state == DealState.CREATIVE_APPROVED.value:
+            if deal.scheduled_at is None:
+                # Keep legacy flows moving: no explicit schedule means "post as soon as funded".
+                deal.scheduled_at = datetime.now(timezone.utc)
+                db.add(deal)
             apply_transition(
                 db,
                 deal=deal,

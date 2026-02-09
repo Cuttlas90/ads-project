@@ -128,7 +128,10 @@ export const useCampaignsStore = defineStore('campaigns', {
       campaignId: number,
       payload: {
         channel_id: number
-        proposed_format_label: string
+        proposed_format_label?: string
+        proposed_placement_type: 'post' | 'story'
+        proposed_exclusive_hours: number
+        proposed_retention_hours: number
         message?: string
       },
     ): Promise<CampaignApplicationSummary> {
@@ -147,11 +150,10 @@ export const useCampaignsStore = defineStore('campaigns', {
       campaignId: number,
       applicationId: number,
       payload: {
-        price_ton: string
-        ad_type: string
         creative_text: string
         creative_media_type: string
         creative_media_ref: string
+        start_at?: string
       },
     ): Promise<{ id: number }> {
       this.accepting = true

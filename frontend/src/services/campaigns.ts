@@ -7,6 +7,11 @@ import type {
   CampaignSummary,
 } from '../types/api'
 
+export interface CampaignCreativeUploadResponse {
+  creative_media_ref: string
+  creative_media_type: 'image' | 'video'
+}
+
 export const campaignsService = {
   create(payload: Record<string, unknown>) {
     return api.post<CampaignSummary>('/campaigns', payload)
@@ -51,7 +56,10 @@ export const campaignsService = {
     campaignId: number,
     payload: {
       channel_id: number
-      proposed_format_label: string
+      proposed_format_label?: string
+      proposed_placement_type: 'post' | 'story'
+      proposed_exclusive_hours: number
+      proposed_retention_hours: number
       message?: string
     },
   ) {
@@ -61,16 +69,23 @@ export const campaignsService = {
     campaignId: number,
     applicationId: number,
     payload: {
-      price_ton: string
-      ad_type: string
       creative_text: string
       creative_media_type: string
       creative_media_ref: string
+      start_at?: string
     },
   ) {
     return api.post<{ id: number }>(
       `/campaigns/${campaignId}/applications/${applicationId}/accept`,
       payload,
+    )
+  },
+  uploadCreative(campaignId: number, applicationId: number, file: File) {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post<CampaignCreativeUploadResponse>(
+      `/campaigns/${campaignId}/applications/${applicationId}/creative/upload`,
+      formData,
     )
   },
 }

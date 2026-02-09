@@ -58,6 +58,9 @@ export interface CampaignOfferInboxItem {
   channel_title?: string | null
   owner_id: number
   proposed_format_label: string
+  proposed_placement_type: PlacementType
+  proposed_exclusive_hours: number
+  proposed_retention_hours: number
   status: string
   created_at: string
 }
@@ -75,6 +78,9 @@ export interface CampaignApplicationSummary {
   channel_id: number
   owner_id: number
   proposed_format_label: string
+  proposed_placement_type: PlacementType
+  proposed_exclusive_hours: number
+  proposed_retention_hours: number
   message?: string | null
   status: string
   hidden_at?: string | null

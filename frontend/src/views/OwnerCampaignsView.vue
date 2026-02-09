@@ -47,11 +47,25 @@
                 </option>
               </select>
             </label>
-            <TgInput
-              v-model="formFor(campaign.id).proposedFormat"
-              label="Proposed format"
-              placeholder="Post"
-            />
+            <label class="owner-campaigns__field">
+              <span>Placement type</span>
+              <select v-model="formFor(campaign.id).placementType" class="owner-campaigns__select">
+                <option value="post">Post</option>
+                <option value="story">Story</option>
+              </select>
+            </label>
+            <div class="owner-campaigns__terms">
+              <TgInput
+                v-model="formFor(campaign.id).exclusiveHours"
+                label="Exclusive hours"
+                type="number"
+              />
+              <TgInput
+                v-model="formFor(campaign.id).retentionHours"
+                label="Retention hours"
+                type="number"
+              />
+            </div>
             <TgInput
               v-model="formFor(campaign.id).message"
               label="Message (optional)"
@@ -90,7 +104,9 @@ import { useChannelsStore } from '../stores/channels'
 
 interface ApplyForm {
   channelId: number
-  proposedFormat: string
+  placementType: 'post' | 'story'
+  exclusiveHours: string
+  retentionHours: string
   message: string
 }
 
@@ -109,7 +125,9 @@ const formFor = (campaignId: number): ApplyForm => {
   if (!forms[campaignId]) {
     forms[campaignId] = {
       channelId: 0,
-      proposedFormat: 'Post',
+      placementType: 'post',
+      exclusiveHours: '0',
+      retentionHours: '24',
       message: '',
     }
   }
@@ -122,8 +140,21 @@ const loadCampaigns = async () => {
 
 const apply = async (campaignId: number) => {
   const form = formFor(campaignId)
-  if (!form.channelId || !form.proposedFormat.trim()) {
-    campaignsStore.error = 'Verified channel and proposed format are required.'
+  const exclusiveHours = Number(form.exclusiveHours)
+  const retentionHours = Number(form.retentionHours)
+  if (!form.channelId) {
+    campaignsStore.error = 'Verified channel is required.'
+    return
+  }
+  if (
+    Number.isNaN(exclusiveHours) ||
+    !Number.isInteger(exclusiveHours) ||
+    exclusiveHours < 0 ||
+    Number.isNaN(retentionHours) ||
+    !Number.isInteger(retentionHours) ||
+    retentionHours < 1
+  ) {
+    campaignsStore.error = 'Exclusive must be >= 0 and retention must be >= 1.'
     return
   }
   applyingCampaignId.value = campaignId
@@ -131,7 +162,10 @@ const apply = async (campaignId: number) => {
   try {
     await campaignsStore.applyToCampaign(campaignId, {
       channel_id: form.channelId,
-      proposed_format_label: form.proposedFormat.trim(),
+      proposed_format_label: form.placementType === 'story' ? 'Story' : 'Post',
+      proposed_placement_type: form.placementType,
+      proposed_exclusive_hours: exclusiveHours,
+      proposed_retention_hours: retentionHours,
       message: form.message.trim() || undefined,
     })
     successByCampaign[campaignId] = 'Application sent'
@@ -171,6 +205,12 @@ onMounted(async () => {
 .owner-campaigns__apply {
   display: grid;
   gap: 0.65rem;
+}
+
+.owner-campaigns__terms {
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
 }
 
 .owner-campaigns__field {
