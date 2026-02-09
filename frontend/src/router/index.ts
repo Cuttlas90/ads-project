@@ -63,6 +63,12 @@ const routes: RouteRecordRaw[] = [
     component: ChannelStatsView,
     meta: routeMeta('owner'),
   },
+  {
+    path: '/owner/campaigns',
+    name: 'owner-campaigns',
+    component: OwnerCampaignsView,
+    meta: routeMeta('owner'),
+  },
   { path: '/owner/deals', name: 'owner-deals', component: OwnerDealsView, meta: routeMeta('owner') },
   {
     path: '/owner/deals/:id/creative',
