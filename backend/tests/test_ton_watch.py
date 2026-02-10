@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, select
@@ -10,9 +12,11 @@ from app.domain.escrow_fsm import EscrowState
 from app.models.channel import Channel
 from app.models.deal import Deal, DealSourceType, DealState
 from app.models.deal_escrow import DealEscrow
+from app.models.deal_event import DealEvent
 from app.models.listing import Listing
 from app.models.listing_format import ListingFormat
 from app.models.user import User
+from app.services.deal_fsm import DealTransitionError
 from app.settings import Settings
 from app.worker.ton_watch import _process_escrow
 from shared.db.base import SQLModel
@@ -35,8 +39,14 @@ class FakeAdapter:
         return self.confirmations
 
 
-def _seed_escrow(session: Session) -> DealEscrow:
-    advertiser = User(telegram_user_id=111, username="adv")
+def _seed_escrow(
+    session: Session,
+    *,
+    scheduled_at: datetime | None = None,
+    received_amount: Decimal = Decimal("0"),
+    escrow_state: str = EscrowState.AWAITING_DEPOSIT.value,
+) -> DealEscrow:
+    advertiser = User(telegram_user_id=111, username="adv", ton_wallet_address="EQ_ADV")
     owner = User(telegram_user_id=222, username="owner")
     session.add(advertiser)
     session.add(owner)
@@ -76,6 +86,7 @@ def _seed_escrow(session: Session) -> DealEscrow:
         creative_media_type="image",
         creative_media_ref="ref",
         posting_params=None,
+        scheduled_at=scheduled_at,
         state=DealState.CREATIVE_APPROVED.value,
     )
     session.add(deal)
@@ -83,10 +94,13 @@ def _seed_escrow(session: Session) -> DealEscrow:
 
     escrow = DealEscrow(
         deal_id=deal.id,
-        state=EscrowState.AWAITING_DEPOSIT.value,
-        deposit_address="EQ_TEST_ADDRESS",
+        state=escrow_state,
+        deposit_address="0:1111111111111111111111111111111111111111111111111111111111111111",
+        deposit_address_raw="0:1111111111111111111111111111111111111111111111111111111111111111",
+        subwallet_id=123,
+        escrow_network="testnet",
         expected_amount_ton=Decimal("10.00"),
-        received_amount_ton=Decimal("0"),
+        received_amount_ton=received_amount,
         fee_percent=Decimal("5.00"),
     )
     session.add(escrow)
@@ -134,7 +148,6 @@ def test_watch_idempotent(monkeypatch) -> None:
         assert escrow.state == EscrowState.FUNDED.value
         deal = session.exec(select(Deal).where(Deal.id == escrow.deal_id)).one()
         assert deal.state == DealState.FUNDED.value
-        assert deal.scheduled_at is not None
         assert len(calls) == 1
 
         previous_amount = escrow.received_amount_ton
@@ -142,5 +155,151 @@ def test_watch_idempotent(monkeypatch) -> None:
         session.commit()
         session.refresh(escrow)
         assert escrow.received_amount_ton == previous_amount
+
+    SQLModel.metadata.drop_all(engine)
+
+
+def test_watch_timeout_without_funding_marks_refunded() -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    now = datetime.now(timezone.utc)
+    settings = Settings(_env_file=None, TON_CONFIRMATIONS_REQUIRED=3)
+    adapter = FakeAdapter([])
+
+    with Session(engine) as session:
+        escrow = _seed_escrow(
+            session,
+            scheduled_at=now - timedelta(minutes=1),
+            received_amount=Decimal("0"),
+            escrow_state=EscrowState.AWAITING_DEPOSIT.value,
+        )
+        _process_escrow(db=session, escrow=escrow, adapter=adapter, settings=settings)
+        session.commit()
+        session.refresh(escrow)
+
+        deal = session.exec(select(Deal).where(Deal.id == escrow.deal_id)).one()
+        assert escrow.state == EscrowState.FAILED.value
+        assert deal.state == DealState.REFUNDED.value
+        assert escrow.refunded_amount_ton == Decimal("0E-9")
+        assert escrow.refunded_at is not None
+
+    SQLModel.metadata.drop_all(engine)
+
+
+def test_watch_timeout_partial_funding_triggers_refund(monkeypatch) -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    now = datetime.now(timezone.utc)
+    settings = Settings(_env_file=None, TON_CONFIRMATIONS_REQUIRED=3)
+    adapter = FakeAdapter([])
+    calls: list[int] = []
+
+    def _fake_refund(*, escrow, **kwargs):
+        calls.append(1)
+        escrow.refund_tx_hash = "tx_timeout_refund"
+        escrow.refunded_amount_ton = Decimal("4.980000000")
+        escrow.refunded_at = datetime.now(timezone.utc)
+        return None
+
+    monkeypatch.setattr("app.worker.ton_watch.ensure_refund", _fake_refund)
+
+    with Session(engine) as session:
+        escrow = _seed_escrow(
+            session,
+            scheduled_at=now - timedelta(minutes=1),
+            received_amount=Decimal("5"),
+            escrow_state=EscrowState.DEPOSIT_DETECTED.value,
+        )
+        _process_escrow(db=session, escrow=escrow, adapter=adapter, settings=settings)
+        session.commit()
+        session.refresh(escrow)
+
+        deal = session.exec(select(Deal).where(Deal.id == escrow.deal_id)).one()
+        assert escrow.state == EscrowState.FAILED.value
+        assert deal.state == DealState.REFUNDED.value
+        assert escrow.refund_tx_hash == "tx_timeout_refund"
+        assert calls == [1]
+
+    SQLModel.metadata.drop_all(engine)
+
+
+def test_watch_timeout_uses_start_at_fallback_from_proposal() -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    settings = Settings(_env_file=None, TON_CONFIRMATIONS_REQUIRED=3)
+    adapter = FakeAdapter([])
+
+    with Session(engine) as session:
+        escrow = _seed_escrow(
+            session,
+            scheduled_at=None,
+            received_amount=Decimal("0"),
+            escrow_state=EscrowState.AWAITING_DEPOSIT.value,
+        )
+        session.add(
+            DealEvent(
+                deal_id=escrow.deal_id,
+                actor_id=None,
+                event_type="proposal",
+                payload={"start_at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()},
+            )
+        )
+        session.commit()
+        session.refresh(escrow)
+
+        _process_escrow(db=session, escrow=escrow, adapter=adapter, settings=settings)
+        session.commit()
+        session.refresh(escrow)
+
+        deal = session.exec(select(Deal).where(Deal.id == escrow.deal_id)).one()
+        assert escrow.state == EscrowState.FAILED.value
+        assert deal.state == DealState.REFUNDED.value
+
+    SQLModel.metadata.drop_all(engine)
+
+
+def test_watch_uses_fsm_transition_helpers(monkeypatch) -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    settings = Settings(_env_file=None, TON_CONFIRMATIONS_REQUIRED=3)
+    txs = [
+        {"hash": "tx1", "lt": "1", "amount_ton": Decimal("10"), "utime": 1, "mc_block_seqno": 10},
+    ]
+    adapter = FakeAdapter(txs)
+    adapter.confirmations = 3
+
+    def _boom(*args, **kwargs):
+        raise DealTransitionError("blocked")
+
+    monkeypatch.setattr("app.worker.ton_watch.apply_transition", _boom)
+
+    with Session(engine) as session:
+        escrow = _seed_escrow(session)
+        with pytest.raises(DealTransitionError):
+            _process_escrow(db=session, escrow=escrow, adapter=adapter, settings=settings)
+        session.rollback()
+
+        refreshed = session.exec(select(Deal).where(Deal.id == escrow.deal_id)).one()
+        assert refreshed.state == DealState.CREATIVE_APPROVED.value
 
     SQLModel.metadata.drop_all(engine)

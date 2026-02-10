@@ -24,8 +24,6 @@ from app.models.deal import Deal, DealSourceType, DealState
 from app.models.deal_event import DealEvent
 from app.models.deal_escrow import DealEscrow
 from app.models.escrow_event import EscrowEvent
-from app.models.listing import Listing
-from app.models.listing_format import ListingFormat
 from app.models.user import User
 from app.settings import Settings
 from shared.db.base import SQLModel
@@ -677,6 +675,8 @@ def test_deal_timeline_merges_events(client: TestClient, db_engine) -> None:
         escrow = DealEscrow(
             deal_id=deal.id,
             state="CREATED",
+            subwallet_id=999,
+            escrow_network="testnet",
             expected_amount_ton=deal.price_ton,
             received_amount_ton=Decimal("0"),
             fee_percent=Decimal("1.00"),

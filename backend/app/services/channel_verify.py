@@ -24,6 +24,13 @@ from shared.telegram.errors import TelegramAuthorizationError
 logger = logging.getLogger(__name__)
 
 
+def _to_bot_api_chat_id(chat_id: int) -> int:
+    # Telethon channel ids are typically positive; Bot API channel ids are -100-prefixed.
+    if 0 < chat_id < 1_000_000_000_000:
+        return -1_000_000_000_000 - chat_id
+    return chat_id
+
+
 async def verify_channel(
     *,
     channel_id: int,
@@ -161,9 +168,9 @@ async def verify_channel(
     _log_phase(channel_id=channel_id, phase="persist", status="start")
     try:
         if full_chat_id is not None:
-            channel.telegram_channel_id = int(full_chat_id)
+            channel.telegram_channel_id = _to_bot_api_chat_id(int(full_chat_id))
         elif chat_id is not None:
-            channel.telegram_channel_id = int(chat_id)
+            channel.telegram_channel_id = _to_bot_api_chat_id(int(chat_id))
 
         if chat_username:
             channel.username = chat_username.lower()

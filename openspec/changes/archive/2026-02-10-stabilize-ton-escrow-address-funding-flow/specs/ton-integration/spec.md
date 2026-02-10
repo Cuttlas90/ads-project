@@ -1,8 +1,5 @@
-# ton-integration Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-ton-escrow-funding. Update Purpose after archive.
-## Requirements
 ### Requirement: TON settings
 The backend SHALL define TON settings: `TON_ENABLED` (default true), `TON_NETWORK` (default `testnet` when `ENV=dev`, `mainnet` otherwise), `TON_CONFIRMATIONS_REQUIRED` (default 3), `TON_FEE_PERCENT`, `TON_HOT_WALLET_MNEMONIC`, `TONCENTER_API`, `TONCENTER_KEY` (optional), and `TONCONNECT_MANIFEST_URL`. All TON features SHALL fail fast with a clear error if `TON_ENABLED` is false or required values are missing.
 
@@ -61,4 +58,3 @@ The system SHALL compute settlement principal as `min(received_amount_ton, expec
 #### Scenario: Very small partial refund still deducts fee
 - **WHEN** escrow principal is 0.01 TON and refund network fee is 0.02 TON
 - **THEN** the system records a zero refund outcome and does not send a refund transfer
-

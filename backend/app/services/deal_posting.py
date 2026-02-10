@@ -15,11 +15,20 @@ class DealPostingError(RuntimeError):
     pass
 
 
+def _to_bot_api_chat_id(chat_id: int) -> int:
+    # Telethon channel ids are typically positive; Bot API channel ids are -100-prefixed.
+    if 0 < chat_id < 1_000_000_000_000:
+        return -1_000_000_000_000 - chat_id
+    return chat_id
+
+
 def _resolve_chat_id(channel: Channel) -> int | str:
     if channel.telegram_channel_id is not None:
-        return channel.telegram_channel_id
+        return _to_bot_api_chat_id(int(channel.telegram_channel_id))
     if channel.username:
-        return channel.username
+        username = channel.username.strip()
+        if username:
+            return username if username.startswith("@") else f"@{username}"
     raise DealPostingError("Channel is missing telegram identifier")
 
 

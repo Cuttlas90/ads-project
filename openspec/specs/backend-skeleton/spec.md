@@ -11,11 +11,28 @@ The backend service SHALL include backend/app/__init__.py and backend/tests/__in
 - **THEN** only package initialization, settings/logging setup, API routing, the /health endpoint, and the Celery stub are present
 
 ### Requirement: Backend health endpoint
-The backend service SHALL expose a GET /health endpoint that returns HTTP 200 with JSON body {"status": "ok"} and MUST NOT require database connectivity.
+The backend service SHALL expose a GET `/health` endpoint that returns HTTP 200, MUST NOT require database connectivity, and SHALL report configuration readiness. The response JSON SHALL include:
+- `status`: `ok` when all required enabled-subsystem checks pass, otherwise `degraded`.
+- `checks`: an object with subsystem entries (`backend`, `ton`, `telegram`, `workers`), each containing `ready` (boolean) and `missing` (array of required env variable names not configured).
 
-#### Scenario: Health check response
-- **WHEN** a client requests GET /health
-- **THEN** the response status is 200 and the JSON body matches the required structure without requiring a database connection
+The endpoint SHALL evaluate required settings from runtime configuration:
+- `ton` check when TON is enabled: `TON_HOT_WALLET_MNEMONIC`, `TONCENTER_API`, `TON_FEE_PERCENT`, `TONCONNECT_MANIFEST_URL`.
+- `telegram` check when Telegram is enabled: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`.
+- `workers` check: broker/backend readiness via `REDIS_URL` or explicit `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND`.
+
+The endpoint MUST NOT expose secret values; it SHALL only return key names and readiness booleans.
+
+#### Scenario: Fully configured health response
+- **WHEN** all required env settings for enabled subsystems are configured
+- **THEN** `GET /health` returns HTTP 200 with `status = ok` and empty `missing` arrays for checked subsystems
+
+#### Scenario: Missing TON setting is reported
+- **WHEN** TON is enabled and `TONCENTER_API` is missing
+- **THEN** `GET /health` returns HTTP 200 with `status = degraded` and `checks.ton.missing` including `TONCENTER_API`
+
+#### Scenario: Health diagnostics never leak secret values
+- **WHEN** `GET /health` is requested
+- **THEN** response includes only readiness flags and missing env key names, without returning any environment variable values
 
 ### Requirement: Backend settings configuration
 The backend service SHALL implement configuration using pydantic-settings and load values from environment variables. It SHALL define ENV (default "dev"), APP_NAME (default "Telegram Ads Marketplace API"), LOG_LEVEL (default "INFO"), DATABASE_URL (default "postgresql+psycopg://ads:ads@postgres:5432/ads"), REDIS_URL (default "redis://redis:6379/0"), CELERY_BROKER_URL (default to REDIS_URL), and CELERY_RESULT_BACKEND (default to REDIS_URL). The settings module SHALL expose a cached get_settings() accessor, and pydantic-settings SHALL be listed as a runtime dependency in backend/pyproject.toml.

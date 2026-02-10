@@ -20,6 +20,15 @@ class DealEscrow(SQLModel, table=True):
         default=None,
         sa_column=Column(String, nullable=True, unique=True),
     )
+    deposit_address_raw: str | None = Field(
+        default=None,
+        sa_column=Column(String, nullable=True, index=True),
+    )
+    subwallet_id: int = Field(sa_column=Column(Integer, nullable=False))
+    escrow_network: str | None = Field(
+        default=None,
+        sa_column=Column(String, nullable=True),
+    )
     expected_amount_ton: Decimal | None = Field(
         default=None,
         sa_column=Column(Numeric(18, 9), nullable=True),

@@ -9,6 +9,11 @@ def _redis_url() -> str:
 
 celery_app = Celery("ads_worker", broker=_redis_url(), backend=_redis_url())
 celery_app.autodiscover_tasks(["app.worker"])
+celery_app.conf.imports = (
+    "app.worker.ton_watch",
+    "app.worker.deal_posting",
+    "app.worker.deal_verification",
+)
 celery_app.conf.timezone = "UTC"
 celery_app.conf.beat_schedule = {
     "ton-escrow-watch": {

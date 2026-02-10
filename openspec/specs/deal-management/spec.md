@@ -34,10 +34,10 @@ The system SHALL persist deal events in a `deal_events` table with fields `id`, 
 - **THEN** a `deal_events` row is stored with `event_type = transition` and populated `from_state`/`to_state`
 
 ### Requirement: DealState enum and transition table
-The system SHALL define a DealState enum with the canonical values `DRAFT`, `NEGOTIATION`, `REJECTED`, `ACCEPTED`, `CREATIVE_SUBMITTED`, `CREATIVE_CHANGES_REQUESTED`, `CREATIVE_APPROVED`, `FUNDED`, `SCHEDULED`, `POSTED`, `VERIFIED`, `RELEASED`, and `REFUNDED`. It SHALL define a transition table that lists allowed actions, allowed actor roles (`advertiser`, `channel_owner`, `system`), and allowed `from_state` → `to_state` pairs. The transition table SHALL include explicit negotiation actions: participant proposes (`DRAFT`/`NEGOTIATION` → `NEGOTIATION`), counterparty approves latest proposal (`DRAFT`/`NEGOTIATION` → `CREATIVE_APPROVED`), and counterparty rejects latest proposal (`DRAFT`/`NEGOTIATION` → `REJECTED`). The transition table SHALL include system-only actions that move a deal from `CREATIVE_APPROVED` to `FUNDED`, from `FUNDED` to `SCHEDULED`, from `SCHEDULED` to `POSTED`, from `POSTED` to `VERIFIED`, from `VERIFIED` to `RELEASED`, and from `POSTED` to `REFUNDED` when verification fails. The transition table SHALL be treated as authoritative and SHALL reject any unspecified transition.
+The system SHALL define a DealState enum with the canonical values `DRAFT`, `NEGOTIATION`, `REJECTED`, `ACCEPTED`, `CREATIVE_SUBMITTED`, `CREATIVE_CHANGES_REQUESTED`, `CREATIVE_APPROVED`, `FUNDED`, `SCHEDULED`, `POSTED`, `VERIFIED`, `RELEASED`, and `REFUNDED`. It SHALL define a transition table that lists allowed actions, allowed actor roles (`advertiser`, `channel_owner`, `system`), and allowed `from_state` -> `to_state` pairs. The transition table SHALL include explicit negotiation actions: participant proposes (`DRAFT`/`NEGOTIATION` -> `NEGOTIATION`), counterparty approves latest proposal (`DRAFT`/`NEGOTIATION` -> `CREATIVE_APPROVED`), and counterparty rejects latest proposal (`DRAFT`/`NEGOTIATION` -> `REJECTED`). The transition table SHALL include system-only actions that move a deal from `CREATIVE_APPROVED` to `FUNDED`, from `FUNDED` to `SCHEDULED`, from `SCHEDULED` to `POSTED`, from `POSTED` to `VERIFIED`, from `VERIFIED` to `RELEASED`, from `POSTED` to `REFUNDED` when verification fails, and from `CREATIVE_APPROVED` to `REFUNDED` when funding timeout is reached at effective start time (`scheduled_at` or fallback `start_at`). The transition table SHALL be treated as authoritative and SHALL reject any unspecified transition.
 
 #### Scenario: Invalid transition rejected
-- **WHEN** an action requests a `from_state` → `to_state` pair that is not in the transition table
+- **WHEN** an action requests a `from_state` -> `to_state` pair that is not in the transition table
 - **THEN** the transition is rejected with a validation error
 
 #### Scenario: Counterparty approval finalizes negotiation
@@ -62,6 +62,10 @@ The system SHALL define a DealState enum with the canonical values `DRAFT`, `NEG
 
 #### Scenario: System refunds a tampered deal
 - **WHEN** the system applies the refund action to a `POSTED` deal that fails verification
+- **THEN** the deal transitions to `REFUNDED`
+
+#### Scenario: System closes unfunded approved deal at start time
+- **WHEN** the system applies funding-timeout closure to a `CREATIVE_APPROVED` deal whose effective start time (`scheduled_at` or fallback `start_at`) has passed without full funding
 - **THEN** the deal transitions to `REFUNDED`
 
 ### Requirement: apply_transition function
@@ -164,3 +168,4 @@ The system SHALL expose `POST /deals/{id}/creative/request-edits` requiring auth
 #### Scenario: Advertiser requests edits
 - **WHEN** the advertiser requests edits for a `CREATIVE_SUBMITTED` deal
 - **THEN** the deal transitions to `CREATIVE_CHANGES_REQUESTED`
+

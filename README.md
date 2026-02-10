@@ -28,7 +28,17 @@ docker compose --env-file .env -f infra/docker-compose.yml up --build
 Set TON variables in `.env` for escrow funding:
 - `TON_FEE_PERCENT`, `TON_HOT_WALLET_MNEMONIC`, `TONCENTER_API`, optional `TONCENTER_KEY`
 - `TON_NETWORK` defaults to `testnet` in `ENV=dev`
-The escrow watcher runs via Celery beat every 60 seconds.
+- `TONCONNECT_MANIFEST_URL` is required for TonConnect proof + readiness checks
+
+Automation requires both Celery services:
+- `worker` (executes escrow watch/posting/verification tasks)
+- `beat` (schedules periodic tasks)
+
+Check startup:
+```bash
+docker compose --env-file .env -f infra/docker-compose.yml ps
+curl http://localhost:8000/health
+```
 
 ### Wallet proof flow
 Wallet persistence now uses TonConnect proof challenge/verify endpoints:
@@ -92,7 +102,7 @@ export PYTHONPATH="$(pwd)"
 ### Alembic (backend)
 ```bash
 cd backend
-alembic -c alembic.ini upgrade head
+alembic -c alembic.ini upgrade heads
 alembic -c alembic.ini revision --autogenerate -m "describe_change"
 ```
 
@@ -100,6 +110,7 @@ alembic -c alembic.ini revision --autogenerate -m "describe_change"
 ```bash
 curl http://localhost:8000/health
 ```
+Response now includes subsystem readiness details (`backend`, `ton`, `telegram`, `workers`) and missing configuration key names when status is `degraded`.
 
 ## Tooling
 Root Makefile commands:

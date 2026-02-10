@@ -30,9 +30,10 @@ from app.schemas.deals import (
     DealUpdate,
 )
 from app.services.deal_fsm import DealAction, DealActorRole, DealTransitionError, apply_transition
+from app.services.ton.addressing import to_raw_address
 from app.services.ton.errors import TonConfigError
 from app.services.ton.tonconnect import build_tonconnect_transaction
-from app.services.ton.wallets import generate_deal_deposit_address
+from app.services.ton.wallets import resolve_deal_deposit_address
 from app.settings import Settings
 from shared.telegram.bot_api import BotApiService
 from shared.telegram.errors import TelegramApiError, TelegramConfigError
@@ -815,11 +816,20 @@ def init_escrow(
     if settings.TON_FEE_PERCENT is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="TON_FEE_PERCENT is not configured")
 
+    try:
+        deposit_details = resolve_deal_deposit_address(deal_id=deal.id, settings=settings)
+    except TonConfigError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
     escrow = _load_escrow(db, deal.id)
     if escrow is None:
         escrow = DealEscrow(
             deal_id=deal.id,
             state=EscrowState.CREATED.value,
+            deposit_address=deposit_details.friendly,
+            deposit_address_raw=deposit_details.raw,
+            subwallet_id=deposit_details.subwallet_id,
+            escrow_network=deposit_details.network,
             expected_amount_ton=deal.price_ton,
             received_amount_ton=Decimal("0"),
             fee_percent=settings.TON_FEE_PERCENT,
@@ -831,11 +841,22 @@ def init_escrow(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Escrow is in failed state")
 
     if not escrow.deposit_address:
+        escrow.deposit_address = deposit_details.friendly
+    if not escrow.deposit_address_raw:
         try:
-            escrow.deposit_address = generate_deal_deposit_address(deal_id=deal.id, settings=settings)
-        except TonConfigError as exc:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-        db.add(escrow)
+            escrow.deposit_address_raw = to_raw_address(escrow.deposit_address)
+        except Exception:
+            escrow.deposit_address_raw = deposit_details.raw
+    if escrow.subwallet_id is None:
+        escrow.subwallet_id = deposit_details.subwallet_id
+    if not escrow.escrow_network:
+        escrow.escrow_network = deposit_details.network
+
+    if not escrow.deposit_address:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Deposit address is missing")
+    if not escrow.deposit_address_raw:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Deposit canonical address is missing")
+    db.add(escrow)
 
     if escrow.state == EscrowState.CREATED.value:
         try:

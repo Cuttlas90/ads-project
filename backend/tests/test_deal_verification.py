@@ -79,7 +79,10 @@ def _seed_posted_deal(
     escrow = DealEscrow(
         deal_id=deal.id,
         state=EscrowState.FUNDED.value,
-        deposit_address="EQ_TEST",
+        deposit_address="0:2222222222222222222222222222222222222222222222222222222222222222",
+        deposit_address_raw="0:2222222222222222222222222222222222222222222222222222222222222222",
+        subwallet_id=456,
+        escrow_network="testnet",
         expected_amount_ton=Decimal("10.00"),
         received_amount_ton=Decimal("10.00"),
         fee_percent=Decimal("5.00"),
@@ -99,7 +102,11 @@ def test_verify_posted_deals_releases_after_windows() -> None:
     )
     SQLModel.metadata.create_all(engine)
 
-    settings = Settings(_env_file=None, TON_FEE_PERCENT=Decimal("5.0"))
+    settings = Settings(
+        _env_file=None,
+        TON_FEE_PERCENT=Decimal("5.0"),
+        TON_REFUND_NETWORK_FEE=Decimal("0.02"),
+    )
     now = datetime.now(timezone.utc)
 
     def fake_transfer(**kwargs):
@@ -127,7 +134,7 @@ def test_verify_posted_deals_releases_after_windows() -> None:
 
         assert updated.state == DealState.RELEASED.value
         assert updated_escrow.release_tx_hash == "tx_release"
-        assert updated_escrow.released_amount_ton == Decimal("9.500000000")
+        assert updated_escrow.released_amount_ton == Decimal("9.480000000")
 
     SQLModel.metadata.drop_all(engine)
 

@@ -1,8 +1,5 @@
-# escrow-management Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-ton-escrow-funding. Update Purpose after archive.
-## Requirements
 ### Requirement: Escrow persistence
 The system SHALL persist escrows in a `deal_escrows` table with fields `id`, `deal_id` (FK to `deals.id`, unique), `state` (required, indexed), `deposit_address` (wallet-facing friendly form, nullable), `deposit_address_raw` (canonical raw form, nullable, indexed), `subwallet_id` (required int), `escrow_network` (nullable string), `expected_amount_ton` (nullable decimal), `received_amount_ton` (nullable decimal), `deposit_tx_hash` (nullable string, indexed), `deposit_confirmations` (int default 0), `fee_percent` (required decimal), `release_tx_hash` (nullable string), `refund_tx_hash` (nullable string), `released_amount_ton` (nullable decimal), `refunded_amount_ton` (nullable decimal), `released_at` (nullable timestamp), `refunded_at` (nullable timestamp), `created_at`, and `updated_at`. It SHALL set `expected_amount_ton = deal.price_ton` at escrow creation, set `fee_percent` as a snapshot from settings, derive and persist `subwallet_id` from deal id, persist `escrow_network` when available from active TON configuration, and enforce one escrow per deal.
 
@@ -29,13 +26,6 @@ The system SHALL persist escrow events in an `escrow_events` table with fields `
 - **WHEN** the watcher sees a transaction hash/lt already persisted for the same escrow
 - **THEN** no duplicate `tx_seen` amount is counted and no duplicate transaction event is recorded
 
-### Requirement: Escrow FSM and transition helper
-The system SHALL define an EscrowState enum with the values `CREATED`, `AWAITING_DEPOSIT`, `DEPOSIT_DETECTED`, `FUNDED`, and `FAILED`, and a transition table listing allowed `from_state` -> `to_state` pairs. It SHALL expose `apply_escrow_transition(escrow, to_state, actor_user_id, event_type, payload)` as the only allowed way to mutate `deal_escrows.state`, and each successful transition SHALL write an `escrow_events` row.
-
-#### Scenario: Invalid escrow transition rejected
-- **WHEN** a transition not in the escrow transition table is requested
-- **THEN** the transition is rejected and no state or event change occurs
-
 ### Requirement: Escrow init endpoint
 The system SHALL expose `POST /deals/{id}/escrow/init` requiring authentication. It SHALL allow only the deal advertiser to call it and SHALL require the deal to be in `CREATIVE_APPROVED` state. It SHALL create the escrow row if missing, ensure both `deposit_address` and `deposit_address_raw` exist, transition the escrow to `AWAITING_DEPOSIT`, and return the wallet-facing deposit address, fee percent, and confirmation threshold. The endpoint SHALL be idempotent.
 
@@ -43,12 +33,7 @@ The system SHALL expose `POST /deals/{id}/escrow/init` requiring authentication.
 - **WHEN** the advertiser calls escrow init twice for the same creative-approved deal
 - **THEN** the same escrow id, subwallet id, and deposit addresses are returned and no duplicate escrow is created
 
-### Requirement: Escrow status endpoint
-The system SHALL expose `GET /deals/{id}/escrow` requiring authentication for deal participants. It SHALL return `state`, `deposit_address`, `expected_amount_ton`, `received_amount_ton`, and `deposit_confirmations`.
-
-#### Scenario: Funding screen polls escrow
-- **WHEN** the UI calls `/deals/{id}/escrow`
-- **THEN** the response includes escrow state and confirmation data
+## ADDED Requirements
 
 ### Requirement: Funding timeout outcome persistence
 The system SHALL enforce funding timeout at effective start time for escrows that are still not funded. Effective start time SHALL resolve to `deal.scheduled_at`; when `scheduled_at` is null it SHALL fallback to the latest negotiated `start_at`. Timeout processing SHALL persist explicit reason payloads in escrow/deal events. If no funds were received, timeout closure SHALL persist zero-refund outcome without transfer hash. If partial funds were received, timeout closure SHALL persist advertiser refund metadata (`refund_tx_hash`, `refunded_amount_ton`, `refunded_at`) after transfer.
@@ -64,4 +49,3 @@ The system SHALL enforce funding timeout at effective start time for escrows tha
 #### Scenario: Timeout uses start_at fallback
 - **WHEN** `scheduled_at` is null and latest negotiated `start_at` is in the past while escrow is not fully funded
 - **THEN** timeout closure behavior executes using that fallback start time
-

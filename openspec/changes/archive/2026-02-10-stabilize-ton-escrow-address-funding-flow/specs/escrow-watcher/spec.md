@@ -1,8 +1,5 @@
-# escrow-watcher Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-ton-escrow-funding. Update Purpose after archive.
-## Requirements
 ### Requirement: TonCenter chain adapter
 The system SHALL provide a TonCenter V3 JSON-RPC adapter with a minimal interface to (a) list incoming transactions for a given address since a cursor and (b) fetch confirmation counts for a transaction hash. The adapter SHALL be configured via `TONCENTER_API` and optional `TONCENTER_KEY` and MUST NOT hardcode provider URLs. The adapter SHALL normalize account and destination addresses to canonical raw format before matching transactions.
 
@@ -40,4 +37,3 @@ When `received_amount_ton >= expected_amount_ton` and confirmations meet the thr
 #### Scenario: Timeout uses start_at fallback when scheduled_at is null
 - **WHEN** a creative-approved deal has null `scheduled_at`, fallback `start_at` in the past, and escrow is unfunded
 - **THEN** watcher executes timeout closure using fallback start time rules
-

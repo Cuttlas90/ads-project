@@ -12,6 +12,7 @@ from app.models.deal import Deal, DealSourceType, DealState
 from app.models.listing import Listing
 from app.models.listing_format import ListingFormat
 from app.models.user import User
+from app.services.deal_fsm import DealTransitionError
 from app.settings import Settings
 from app.worker.deal_posting import _post_due_deals
 from shared.db.base import SQLModel
@@ -46,6 +47,7 @@ def _seed_deal(
     placement_type: str,
     media_type: str,
     retention_hours: int,
+    state: str = DealState.FUNDED.value,
 ) -> Deal:
     advertiser = User(telegram_user_id=111, username="adv")
     owner = User(telegram_user_id=222, username="owner")
@@ -88,7 +90,7 @@ def _seed_deal(
         creative_media_ref="ref",
         posting_params=None,
         scheduled_at=scheduled_at,
-        state=DealState.FUNDED.value,
+        state=state,
     )
     session.add(deal)
     session.commit()
@@ -165,5 +167,152 @@ def test_post_due_deals_posts_story(monkeypatch) -> None:
         assert updated.posted_content_hash == "story-hash"
         assert updated.verification_window_hours == 24
         assert bot_api.calls[0]["method"] == "postStory"
+
+    SQLModel.metadata.drop_all(engine)
+
+
+def test_post_due_deals_skips_unfunded_creative_approved(monkeypatch) -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    now = datetime.now(timezone.utc)
+    settings = Settings(_env_file=None)
+    monkeypatch.setattr(deal_posting, "fetch_message_hash_sync", lambda **kwargs: "hash")
+
+    with Session(engine) as session:
+        deal = _seed_deal(
+            session,
+            scheduled_at=now - timedelta(minutes=1),
+            placement_type="post",
+            media_type="image",
+            retention_hours=24,
+            state=DealState.CREATIVE_APPROVED.value,
+        )
+        bot_api = FakeBotApi()
+
+        processed = _post_due_deals(db=session, settings=settings, now=now, bot_api=bot_api)
+        assert processed == 0
+
+        updated = session.exec(select(Deal).where(Deal.id == deal.id)).one()
+        assert updated.state == DealState.CREATIVE_APPROVED.value
+        assert updated.posted_message_id is None
+        assert bot_api.calls == []
+
+    SQLModel.metadata.drop_all(engine)
+
+
+def test_post_due_deals_uses_fsm_transition_helper(monkeypatch) -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    now = datetime.now(timezone.utc)
+    settings = Settings(_env_file=None)
+    monkeypatch.setattr(deal_posting, "fetch_message_hash_sync", lambda **kwargs: "hash")
+
+    def _boom(*args, **kwargs):
+        raise DealTransitionError("blocked")
+
+    monkeypatch.setattr("app.worker.deal_posting.apply_transition", _boom)
+
+    with Session(engine) as session:
+        deal = _seed_deal(
+            session,
+            scheduled_at=now - timedelta(minutes=1),
+            placement_type="post",
+            media_type="image",
+            retention_hours=24,
+            state=DealState.FUNDED.value,
+        )
+        bot_api = FakeBotApi()
+
+        processed = _post_due_deals(db=session, settings=settings, now=now, bot_api=bot_api)
+        assert processed == 0
+
+        updated = session.exec(select(Deal).where(Deal.id == deal.id)).one()
+        assert updated.state == DealState.FUNDED.value
+        assert updated.posted_message_id is None
+        assert bot_api.calls == []
+
+    SQLModel.metadata.drop_all(engine)
+
+
+def test_post_due_deals_normalizes_numeric_channel_id_for_bot_api(monkeypatch) -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    now = datetime.now(timezone.utc)
+    settings = Settings(_env_file=None)
+    monkeypatch.setattr(deal_posting, "fetch_message_hash_sync", lambda **kwargs: "hash")
+
+    with Session(engine) as session:
+        deal = _seed_deal(
+            session,
+            scheduled_at=now - timedelta(minutes=1),
+            placement_type="post",
+            media_type="image",
+            retention_hours=24,
+            state=DealState.FUNDED.value,
+        )
+        channel = session.exec(select(Channel).where(Channel.id == deal.channel_id)).one()
+        channel.telegram_channel_id = 2210950485
+        channel.username = None
+        session.add(channel)
+        session.commit()
+
+        bot_api = FakeBotApi()
+        processed = _post_due_deals(db=session, settings=settings, now=now, bot_api=bot_api)
+
+        assert processed == 1
+        assert bot_api.calls
+        assert bot_api.calls[0]["chat_id"] == -1002210950485
+
+    SQLModel.metadata.drop_all(engine)
+
+
+def test_post_due_deals_prefixes_username_channel_ref(monkeypatch) -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    now = datetime.now(timezone.utc)
+    settings = Settings(_env_file=None)
+    monkeypatch.setattr(deal_posting, "fetch_message_hash_sync", lambda **kwargs: "hash")
+
+    with Session(engine) as session:
+        deal = _seed_deal(
+            session,
+            scheduled_at=now - timedelta(minutes=1),
+            placement_type="post",
+            media_type="image",
+            retention_hours=24,
+            state=DealState.FUNDED.value,
+        )
+        channel = session.exec(select(Channel).where(Channel.id == deal.channel_id)).one()
+        channel.telegram_channel_id = None
+        channel.username = "ludex_channel"
+        session.add(channel)
+        session.commit()
+
+        bot_api = FakeBotApi()
+        processed = _post_due_deals(db=session, settings=settings, now=now, bot_api=bot_api)
+
+        assert processed == 1
+        assert bot_api.calls
+        assert bot_api.calls[0]["chat_id"] == "@ludex_channel"
 
     SQLModel.metadata.drop_all(engine)

@@ -99,6 +99,10 @@ TRANSITIONS: dict[tuple[str, str], TransitionSpec] = {
         DealState.REFUNDED.value,
         {DealActorRole.system.value},
     ),
+    (DealAction.refund.value, DealState.CREATIVE_APPROVED.value): TransitionSpec(
+        DealState.REFUNDED.value,
+        {DealActorRole.system.value},
+    ),
     (DealAction.reject.value, DealState.DRAFT.value): TransitionSpec(
         DealState.REJECTED.value,
         {DealActorRole.advertiser.value, DealActorRole.channel_owner.value},

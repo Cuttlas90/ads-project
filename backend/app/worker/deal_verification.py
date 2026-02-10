@@ -26,6 +26,17 @@ from shared.db.session import SessionLocal
 logger = logging.getLogger(__name__)
 
 
+def _required_worker_settings(settings) -> list[str]:
+    missing: list[str] = []
+    if not settings.TONCENTER_API:
+        missing.append("TONCENTER_API")
+    if not settings.TON_HOT_WALLET_MNEMONIC:
+        missing.append("TON_HOT_WALLET_MNEMONIC")
+    if settings.TON_FEE_PERCENT is None:
+        missing.append("TON_FEE_PERCENT")
+    return missing
+
+
 def _ensure_aware_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
@@ -237,6 +248,13 @@ def _verify_posted_deals(
 def verify_posted_deals() -> int:
     settings = get_settings()
     if not settings.TELEGRAM_ENABLED or not settings.TON_ENABLED:
+        return 0
+    missing = _required_worker_settings(settings)
+    if missing:
+        logger.error(
+            "Deal verification worker misconfigured",
+            extra={"missing_settings": missing},
+        )
         return 0
 
     with SessionLocal() as db:

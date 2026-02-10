@@ -79,6 +79,8 @@ def _seed_escrow(session: Session) -> DealEscrow:
     escrow = DealEscrow(
         deal_id=deal.id,
         state=EscrowState.CREATED.value,
+        subwallet_id=789,
+        escrow_network="testnet",
         expected_amount_ton=Decimal("10.00"),
         received_amount_ton=Decimal("0"),
         fee_percent=Decimal("5.00"),

@@ -21,10 +21,22 @@ from app.models.deal_escrow import DealEscrow
 from app.models.listing import Listing
 from app.models.listing_format import ListingFormat
 from app.models.user import User
+from app.services.ton.addressing import to_raw_address
+from app.services.ton.wallets import DealDepositAddress
 from app.settings import Settings
 from shared.db.base import SQLModel
 
 BOT_TOKEN = "test-bot-token"
+TEST_DEPOSIT_ADDRESS = "0QC3CK09jJSQNrMvUlFia7HTCUWcJ5wIFgPolR6wSbb7krv1"
+
+
+def _fake_deposit_details() -> DealDepositAddress:
+    return DealDepositAddress(
+        friendly=TEST_DEPOSIT_ADDRESS,
+        raw=to_raw_address(TEST_DEPOSIT_ADDRESS),
+        subwallet_id=42,
+        network="testnet",
+    )
 
 
 def build_init_data(payload: dict[str, str], bot_token: str = BOT_TOKEN) -> str:
@@ -127,27 +139,30 @@ def _seed_deal(db_engine) -> int:
 
 def test_escrow_init_idempotent(client, db_engine, monkeypatch) -> None:
     deal_id = _seed_deal(db_engine)
-    monkeypatch.setattr("app.api.routes.deals.generate_deal_deposit_address", lambda **kwargs: "EQ_TEST_ADDRESS")
+    monkeypatch.setattr("app.api.routes.deals.resolve_deal_deposit_address", lambda **kwargs: _fake_deposit_details())
 
     response = client.post(f"/deals/{deal_id}/escrow/init", headers=_auth_headers(111))
     assert response.status_code == 200
     payload = response.json()
-    assert payload["deposit_address"] == "EQ_TEST_ADDRESS"
+    assert payload["deposit_address"] == TEST_DEPOSIT_ADDRESS
 
     response_repeat = client.post(f"/deals/{deal_id}/escrow/init", headers=_auth_headers(111))
     assert response_repeat.status_code == 200
     payload_repeat = response_repeat.json()
-    assert payload_repeat["deposit_address"] == "EQ_TEST_ADDRESS"
+    assert payload_repeat["deposit_address"] == TEST_DEPOSIT_ADDRESS
     assert payload_repeat["escrow_id"] == payload["escrow_id"]
 
     with Session(db_engine) as session:
         escrows = session.exec(select(DealEscrow).where(DealEscrow.deal_id == deal_id)).all()
         assert len(escrows) == 1
+        assert escrows[0].deposit_address_raw == to_raw_address(TEST_DEPOSIT_ADDRESS)
+        assert escrows[0].subwallet_id == 42
+        assert escrows[0].escrow_network == "testnet"
 
 
 def test_escrow_init_requires_advertiser(client, db_engine, monkeypatch) -> None:
     deal_id = _seed_deal(db_engine)
-    monkeypatch.setattr("app.api.routes.deals.generate_deal_deposit_address", lambda **kwargs: "EQ_TEST_ADDRESS")
+    monkeypatch.setattr("app.api.routes.deals.resolve_deal_deposit_address", lambda **kwargs: _fake_deposit_details())
 
     response = client.post(f"/deals/{deal_id}/escrow/init", headers=_auth_headers(222))
     assert response.status_code == 403
@@ -202,14 +217,14 @@ def test_escrow_init_requires_creative_approved(client, db_engine, monkeypatch) 
         session.refresh(deal)
         deal_id = deal.id
 
-    monkeypatch.setattr("app.api.routes.deals.generate_deal_deposit_address", lambda **kwargs: "EQ_TEST_ADDRESS")
+    monkeypatch.setattr("app.api.routes.deals.resolve_deal_deposit_address", lambda **kwargs: _fake_deposit_details())
     response = client.post(f"/deals/{deal_id}/escrow/init", headers=_auth_headers(333))
     assert response.status_code == 400
 
 
 def test_tonconnect_payload(client, db_engine, monkeypatch) -> None:
     deal_id = _seed_deal(db_engine)
-    monkeypatch.setattr("app.api.routes.deals.generate_deal_deposit_address", lambda **kwargs: "EQ_TEST_ADDRESS")
+    monkeypatch.setattr("app.api.routes.deals.resolve_deal_deposit_address", lambda **kwargs: _fake_deposit_details())
 
     response = client.post(f"/deals/{deal_id}/escrow/init", headers=_auth_headers(111))
     assert response.status_code == 200
@@ -217,13 +232,13 @@ def test_tonconnect_payload(client, db_engine, monkeypatch) -> None:
     response = client.post(f"/deals/{deal_id}/escrow/tonconnect-tx", headers=_auth_headers(111))
     assert response.status_code == 200
     payload = response.json()["payload"]
-    assert payload["messages"][0]["address"] == "EQ_TEST_ADDRESS"
+    assert payload["messages"][0]["address"] == TEST_DEPOSIT_ADDRESS
     assert payload["messages"][0]["amount"] == str(10 * 1_000_000_000)
 
 
 def test_escrow_status_endpoint(client, db_engine, monkeypatch) -> None:
     deal_id = _seed_deal(db_engine)
-    monkeypatch.setattr("app.api.routes.deals.generate_deal_deposit_address", lambda **kwargs: "EQ_TEST_ADDRESS")
+    monkeypatch.setattr("app.api.routes.deals.resolve_deal_deposit_address", lambda **kwargs: _fake_deposit_details())
 
     response = client.post(f"/deals/{deal_id}/escrow/init", headers=_auth_headers(111))
     assert response.status_code == 200
@@ -231,5 +246,5 @@ def test_escrow_status_endpoint(client, db_engine, monkeypatch) -> None:
     response = client.get(f"/deals/{deal_id}/escrow", headers=_auth_headers(111))
     assert response.status_code == 200
     payload = response.json()
-    assert payload["deposit_address"] == "EQ_TEST_ADDRESS"
+    assert payload["deposit_address"] == TEST_DEPOSIT_ADDRESS
     assert payload["state"] == "AWAITING_DEPOSIT"

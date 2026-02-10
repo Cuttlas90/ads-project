@@ -6,7 +6,9 @@ from typing import Protocol
 
 import httpx
 
+from app.services.ton.addressing import to_raw_address, try_to_raw_address
 from app.services.ton.errors import TonConfigError
+from app.services.ton.toncenter_url import normalize_toncenter_v3_base_url
 from app.services.ton.utils import nano_to_ton
 from app.settings import Settings
 
@@ -26,10 +28,7 @@ class TonCenterAdapter:
     def _base_url(self) -> str:
         if not self.settings.TONCENTER_API:
             raise TonConfigError("TONCENTER_API is not configured")
-        url = self.settings.TONCENTER_API.rstrip("/")
-        if url.endswith("/jsonRPC"):
-            url = url[: -len("/jsonRPC")]
-        return url
+        return normalize_toncenter_v3_base_url(self.settings.TONCENTER_API)
 
     def _headers(self) -> dict[str, str]:
         if not self.settings.TONCENTER_KEY:
@@ -84,6 +83,11 @@ class TonCenterAdapter:
         }
 
     def find_incoming_tx(self, address: str, min_amount: Decimal, since_lt: str | None) -> dict | None:
+        try:
+            target_raw = to_raw_address(address)
+        except Exception as exc:
+            raise TonConfigError("Invalid TON account address for chain scan") from exc
+
         payload = self._get(
             "/transactions",
             params={"account": address, "limit": 50, "sort": "desc"},
@@ -95,7 +99,8 @@ class TonCenterAdapter:
         for tx in transactions:
             in_msg = tx.get("in_msg") or {}
             destination = in_msg.get("destination") or in_msg.get("dest")
-            if destination != address:
+            destination_raw = try_to_raw_address(str(destination) if destination is not None else None)
+            if destination_raw != target_raw:
                 continue
 
             value = in_msg.get("value")
@@ -116,6 +121,7 @@ class TonCenterAdapter:
 
             tx_entry = dict(fields)
             tx_entry["amount_ton"] = amount_ton
+            tx_entry["destination_raw"] = destination_raw
             tx_entry["raw"] = tx
             candidates.append(tx_entry)
 

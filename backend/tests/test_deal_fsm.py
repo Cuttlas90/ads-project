@@ -252,3 +252,23 @@ def test_system_can_refund_posted_deal(db_engine) -> None:
         session.refresh(deal)
 
         assert deal.state == DealState.REFUNDED.value
+
+
+def test_system_can_refund_creative_approved_deal_on_timeout(db_engine) -> None:
+    with Session(db_engine) as session:
+        deal = _seed_listing_deal(session)
+        deal.state = DealState.CREATIVE_APPROVED.value
+        session.add(deal)
+        session.commit()
+
+        apply_transition(
+            session,
+            deal=deal,
+            action=DealAction.refund.value,
+            actor_id=None,
+            actor_role=DealActorRole.system.value,
+        )
+        session.commit()
+        session.refresh(deal)
+
+        assert deal.state == DealState.REFUNDED.value

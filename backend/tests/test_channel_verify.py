@@ -332,6 +332,7 @@ def test_verify_channel_success_creates_snapshot(client: TestClient, db_engine, 
     with Session(db_engine) as session:
         channel = session.exec(select(Channel).where(Channel.id == channel_id)).one()
         assert channel.is_verified is True
+        assert channel.telegram_channel_id == -1000000000999
         assert channel.username == "updatedname"
         assert channel.title == "Updated Title"
 
