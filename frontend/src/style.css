@@ -23,6 +23,16 @@
   --app-radius-lg: 18px;
   --app-radius-md: 14px;
   --app-radius-sm: 10px;
+
+  --app-notif-neutral-bg: var(--tg-theme-secondary-bg-color, #ffffff);
+  --app-notif-neutral-fg: var(--tg-theme-text-color, #191919);
+  --app-notif-success-bg: rgba(42, 157, 143, 0.18);
+  --app-notif-success-fg: var(--tg-theme-button-color, #2a9d8f);
+  --app-notif-warning-bg: rgba(244, 162, 97, 0.22);
+  --app-notif-warning-fg: var(--tg-theme-accent-text-color, #a3561a);
+  --app-notif-danger-bg: rgba(214, 69, 80, 0.18);
+  --app-notif-danger-fg: var(--tg-theme-destructive-text-color, #d64550);
+  --app-notif-border: rgba(20, 20, 20, 0.14);
 }
 
 *,

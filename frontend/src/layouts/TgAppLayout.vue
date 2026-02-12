@@ -9,6 +9,10 @@
       </div>
     </header>
 
+    <div v-if="$slots['top-notifications']" class="app-top-notifications">
+      <slot name="top-notifications" />
+    </div>
+
     <main class="app-main">
       <slot />
     </main>
@@ -56,6 +60,12 @@
   gap: 1.25rem;
 }
 
+.app-top-notifications {
+  margin-top: 0.6rem;
+  padding: 0 1.5rem;
+  z-index: 11;
+}
+
 .app-bottomnav {
   position: fixed;
   bottom: 0;
@@ -79,6 +89,11 @@
     transform: translateX(-50%);
     max-width: 960px;
     border-radius: 18px 18px 0 0;
+  }
+  .app-top-notifications {
+    max-width: 960px;
+    margin: 0.6rem auto 0;
+    width: 100%;
   }
 }
 </style>

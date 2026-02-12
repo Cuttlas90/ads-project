@@ -4,6 +4,9 @@
     <template #actions>
       <span class="app-role">{{ roleLabel }}</span>
     </template>
+    <template #top-notifications>
+      <TgToastStack />
+    </template>
 
     <router-view v-if="authStore.bootstrapped" />
     <TgSkeleton v-else height="120px" />
@@ -20,7 +23,7 @@
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 
-import { TgSkeleton } from './components/tg'
+import { TgSkeleton, TgToastStack } from './components/tg'
 import TgAppLayout from './layouts/TgAppLayout.vue'
 import { useAuthStore } from './stores/auth'
 

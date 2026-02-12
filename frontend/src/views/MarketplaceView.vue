@@ -26,7 +26,7 @@
         <TgButton full-width :loading="loadingListings" @click="loadListings">Apply filters</TgButton>
       </div>
 
-      <TgStatePanel v-if="error" title="Couldn't load listings" :description="error">
+      <TgStatePanel v-if="listError" tone="danger" title="Couldn't load listings" :description="listError">
         <template #icon>!</template>
       </TgStatePanel>
 
@@ -63,6 +63,9 @@
 
     <TgModal :open="showModal" title="Start deal" max-width="520px" @close="closeModal">
       <div class="marketplace__modal">
+        <TgStatePanel v-if="modalError" tone="danger" title="Couldn't start deal" :description="modalError">
+          <template #icon>!</template>
+        </TgStatePanel>
         <p v-if="selectedFormat" class="marketplace__selected">
           Selected: {{ selectedFormat.placement_type }} · {{ selectedFormat.exclusive_hours }}h exclusive ·
           {{ selectedFormat.retention_hours }}h retention · {{ selectedFormat.price }} TON
@@ -75,6 +78,7 @@
             rows="4"
             placeholder="Write your ad copy"
           ></textarea>
+          <p v-if="fieldErrors.creativeText" class="marketplace__field-error">{{ fieldErrors.creativeText }}</p>
         </label>
         <TgInput v-model="dealForm.start_at" label="Start at" type="datetime-local" />
         <p v-if="expectedEndAt" class="marketplace__expected-end">Expected end: {{ expectedEndAt }}</p>
@@ -93,8 +97,9 @@
             :disabled="uploadingMedia || creatingDeal"
             @change="handleCreativeFile"
           />
+          <p v-if="fieldErrors.creativeMedia" class="marketplace__field-error">{{ fieldErrors.creativeMedia }}</p>
+          <p v-if="dealForm.creative_media_ref" class="marketplace__field-hint">Media uploaded and ready.</p>
         </label>
-        <TgBadge v-if="uploadStatus" tone="success">{{ uploadStatus }}</TgBadge>
       </div>
       <template #footer>
         <TgButton
@@ -114,17 +119,19 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 
-import { TgBadge, TgButton, TgCard, TgInput, TgModal, TgSkeleton, TgStatePanel } from '../components/tg'
+import { TgButton, TgCard, TgInput, TgModal, TgSkeleton, TgStatePanel } from '../components/tg'
 import { listingsService } from '../services/listings'
 import { marketplaceService } from '../services/marketplace'
+import { useNotificationsStore } from '../stores/notifications'
 import type { MarketplaceListingItem, MarketplaceListingFormat } from '../types/api'
 
+const notificationsStore = useNotificationsStore()
 const items = ref<MarketplaceListingItem[]>([])
 const loadingListings = ref(false)
 const creatingDeal = ref(false)
 const uploadingMedia = ref(false)
-const error = ref('')
-const uploadStatus = ref('')
+const listError = ref('')
+const modalError = ref('')
 const showModal = ref(false)
 const selectedFormat = ref<MarketplaceListingFormat | null>(null)
 
@@ -146,6 +153,11 @@ const dealForm = reactive({
   start_at: '',
   creative_media_type: 'image',
   creative_media_ref: '',
+})
+
+const fieldErrors = reactive({
+  creativeText: '',
+  creativeMedia: '',
 })
 
 const canCreateDeal = computed(
@@ -180,7 +192,7 @@ const expectedEndAt = computed(() => {
 
 const loadListings = async () => {
   loadingListings.value = true
-  error.value = ''
+  listError.value = ''
   try {
     const response = await marketplaceService.list({
       search: filters.search || undefined,
@@ -194,10 +206,15 @@ const loadListings = async () => {
     })
     items.value = response.items
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to load listings'
+    listError.value = err instanceof Error ? err.message : 'Failed to load listings'
   } finally {
     loadingListings.value = false
   }
+}
+
+const resetFieldErrors = () => {
+  fieldErrors.creativeText = ''
+  fieldErrors.creativeMedia = ''
 }
 
 const resetDealCreative = () => {
@@ -205,7 +222,8 @@ const resetDealCreative = () => {
   dealForm.start_at = ''
   dealForm.creative_media_ref = ''
   dealForm.creative_media_type = 'image'
-  uploadStatus.value = ''
+  modalError.value = ''
+  resetFieldErrors()
 }
 
 const openDealModal = (listingId: number, format: MarketplaceListingFormat) => {
@@ -228,41 +246,54 @@ const handleCreativeFile = async (event: Event) => {
   const file = (event.target as HTMLInputElement).files?.[0]
   if (!file) return
   if (dealForm.listing_id <= 0) {
-    error.value = 'Select a listing format before uploading media.'
+    modalError.value = 'Select a listing format before uploading media.'
     return
   }
 
   const contentType = file.type || ''
   if (!contentType.startsWith('image/') && !contentType.startsWith('video/')) {
-    error.value = 'Please select an image or video file.'
+    fieldErrors.creativeMedia = 'Please select an image or video file.'
     dealForm.creative_media_ref = ''
-    uploadStatus.value = ''
     return
   }
 
   uploadingMedia.value = true
-  error.value = ''
-  uploadStatus.value = ''
+  modalError.value = ''
+  fieldErrors.creativeMedia = ''
   dealForm.creative_media_ref = ''
   try {
     const response = await listingsService.uploadCreative(dealForm.listing_id, file)
     dealForm.creative_media_ref = response.creative_media_ref
     dealForm.creative_media_type = response.creative_media_type
-    uploadStatus.value = 'Uploaded to Telegram'
+    notificationsStore.pushToast({
+      tone: 'success',
+      source: 'marketplace-modal',
+      message: 'Creative media uploaded to Telegram.',
+    })
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Upload failed'
+    modalError.value = err instanceof Error ? err.message : 'Upload failed'
   } finally {
     uploadingMedia.value = false
   }
 }
 
 const createDeal = async () => {
+  modalError.value = ''
+  resetFieldErrors()
+  if (!dealForm.creative_text.trim()) {
+    fieldErrors.creativeText = 'Please add creative text.'
+  }
+  if (!dealForm.creative_media_ref.trim()) {
+    fieldErrors.creativeMedia = 'Please upload an image or video before starting deal.'
+  }
+
   if (!canCreateDeal.value) {
-    error.value = 'Please add creative text and upload media before starting deal.'
+    if (!fieldErrors.creativeText && !fieldErrors.creativeMedia) {
+      modalError.value = 'Please add creative text and upload media before starting deal.'
+    }
     return
   }
   creatingDeal.value = true
-  error.value = ''
   try {
     await listingsService.createDealFromListing(dealForm.listing_id, {
       listing_format_id: dealForm.listing_format_id,
@@ -271,9 +302,14 @@ const createDeal = async () => {
       creative_media_type: dealForm.creative_media_type,
       creative_media_ref: dealForm.creative_media_ref.trim(),
     })
+    notificationsStore.pushToast({
+      tone: 'success',
+      source: 'marketplace-modal',
+      message: 'Deal created successfully.',
+    })
     closeModal()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to start deal'
+    modalError.value = err instanceof Error ? err.message : 'Failed to start deal'
   } finally {
     creatingDeal.value = false
   }
@@ -381,6 +417,20 @@ onMounted(() => {
   border: 1px dashed rgba(25, 25, 25, 0.25);
   padding: 0.65rem;
   background: var(--app-surface);
+}
+
+.marketplace__field-error {
+  margin: 0;
+  color: var(--app-notif-danger-fg);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.marketplace__field-hint {
+  margin: 0;
+  color: var(--app-notif-success-fg);
+  font-size: 0.82rem;
+  font-weight: 600;
 }
 
 .marketplace__selected {

@@ -36,26 +36,27 @@ const emit = defineEmits<{ dismiss: [] }>()
   border-radius: var(--app-radius-md);
   font-size: 0.9rem;
   box-shadow: var(--app-shadow);
+  border: 1px solid var(--app-notif-border);
 }
 
 .tg-toast--neutral {
-  background: var(--app-surface);
-  color: var(--app-ink);
+  background: var(--app-notif-neutral-bg);
+  color: var(--app-notif-neutral-fg);
 }
 
 .tg-toast--success {
-  background: rgba(42, 157, 143, 0.16);
-  color: var(--app-success);
+  background: var(--app-notif-success-bg);
+  color: var(--app-notif-success-fg);
 }
 
 .tg-toast--warning {
-  background: rgba(244, 162, 97, 0.2);
-  color: #a3561a;
+  background: var(--app-notif-warning-bg);
+  color: var(--app-notif-warning-fg);
 }
 
 .tg-toast--danger {
-  background: rgba(214, 69, 80, 0.18);
-  color: var(--app-danger);
+  background: var(--app-notif-danger-bg);
+  color: var(--app-notif-danger-fg);
 }
 
 .tg-toast__close {
@@ -63,6 +64,7 @@ const emit = defineEmits<{ dismiss: [] }>()
   background: transparent;
   font-size: 1.1rem;
   cursor: pointer;
+  color: currentColor;
 }
 
 .toast-enter-active,

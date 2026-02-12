@@ -1,5 +1,5 @@
 <template>
-  <div class="tg-state">
+  <div class="tg-state" :class="`tg-state--${tone}`">
     <div class="tg-state__icon">
       <slot name="icon">◎</slot>
     </div>
@@ -17,19 +17,25 @@
 interface Props {
   title: string
   description?: string
+  tone?: 'neutral' | 'success' | 'warning' | 'danger'
 }
 
-defineProps<Props>()
+withDefaults(defineProps<Props>(), {
+  tone: 'neutral',
+})
 </script>
 
 <style scoped>
 .tg-state {
+  --tg-state-bg: var(--app-notif-neutral-bg);
+  --tg-state-fg: var(--app-notif-neutral-fg);
   display: flex;
   gap: 1rem;
   padding: 1.5rem;
   border-radius: var(--app-radius-lg);
-  background: var(--app-surface-muted);
-  border: 1px dashed rgba(25, 25, 25, 0.15);
+  background: var(--tg-state-bg);
+  color: var(--tg-state-fg);
+  border: 1px solid var(--app-notif-border);
 }
 
 .tg-state__icon {
@@ -42,10 +48,26 @@ defineProps<Props>()
 
 .tg-state__content p {
   margin: 0.35rem 0 0 0;
-  color: var(--app-ink-muted);
+  color: var(--tg-state-fg);
+  opacity: 0.82;
 }
 
 .tg-state__action {
   margin-top: 0.85rem;
+}
+
+.tg-state--success {
+  --tg-state-bg: var(--app-notif-success-bg);
+  --tg-state-fg: var(--app-notif-success-fg);
+}
+
+.tg-state--warning {
+  --tg-state-bg: var(--app-notif-warning-bg);
+  --tg-state-fg: var(--app-notif-warning-fg);
+}
+
+.tg-state--danger {
+  --tg-state-bg: var(--app-notif-danger-bg);
+  --tg-state-fg: var(--app-notif-danger-fg);
 }
 </style>

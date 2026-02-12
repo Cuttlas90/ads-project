@@ -1,7 +1,7 @@
 <template>
   <section class="funding">
     <TgCard title="Fund escrow" subtitle="Approve in TONConnect, then wait for confirmations.">
-      <TgStatePanel v-if="error" title="Funding issue" :description="error">
+      <TgStatePanel v-if="fundingError" tone="danger" title="Funding issue" :description="fundingError">
         <template #icon>!</template>
       </TgStatePanel>
 
@@ -50,14 +50,16 @@ import { useRoute, useRouter } from 'vue-router'
 import { TgButton, TgCard, TgModal, TgStatePanel } from '../components/tg'
 import { dealsService } from '../services/deals'
 import { useAuthStore } from '../stores/auth'
+import { useNotificationsStore } from '../stores/notifications'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const notificationsStore = useNotificationsStore()
 const dealId = Number(route.params.id)
 
 const loading = ref(false)
-const error = ref('')
+const fundingError = ref('')
 const escrow = ref<Record<string, unknown> | null>(null)
 const tonUi = ref<TonConnectUI | null>(null)
 const poller = ref<number | null>(null)
@@ -69,12 +71,16 @@ const initTonConnect = () => {
   if (tonUi.value) return
   const manifestUrl = import.meta.env.VITE_TONCONNECT_MANIFEST_URL
   if (!manifestUrl) {
-    error.value = 'Missing TONConnect manifest URL'
+    fundingError.value = 'Missing TONConnect manifest URL'
     return
   }
   tonUi.value = new TonConnectUI({
     manifestUrl,
     buttonRootId: 'tonconnect-button',
+    actionsConfiguration: {
+      modals: [],
+      notifications: [],
+    },
   })
 }
 
@@ -102,16 +108,36 @@ const initFunding = async () => {
   }
 
   loading.value = true
-  error.value = ''
+  fundingError.value = ''
   try {
     initTonConnect()
     if (!tonUi.value) return
     await dealsService.escrowInit(dealId)
     const { payload } = await dealsService.tonconnectTx(dealId)
-    await tonUi.value.sendTransaction(payload as Record<string, unknown>)
+    notificationsStore.pushToast({
+      tone: 'neutral',
+      source: 'funding',
+      message: 'Open your wallet to approve the transaction.',
+    })
+    await tonUi.value.sendTransaction(payload as Record<string, unknown>, {
+      modals: [],
+      notifications: [],
+    })
+    notificationsStore.pushToast({
+      tone: 'success',
+      source: 'funding',
+      message: 'Transaction submitted. Waiting for confirmations.',
+    })
     startPolling()
+    void pollStatus()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to initialize funding'
+    fundingError.value = err instanceof Error ? err.message : 'Failed to initialize funding'
+    notificationsStore.pushToast({
+      tone: 'danger',
+      source: 'funding',
+      dedupeKey: `funding-init-${dealId}-${fundingError.value}`,
+      message: fundingError.value,
+    })
   } finally {
     loading.value = false
   }
@@ -119,9 +145,45 @@ const initFunding = async () => {
 
 const pollStatus = async () => {
   try {
-    escrow.value = await dealsService.escrowStatus(dealId)
+    const status = (await dealsService.escrowStatus(dealId)) as Record<string, unknown>
+    escrow.value = status
+    fundingError.value = ''
+
+    const state = typeof status.state === 'string' ? status.state : ''
+    if (state === 'FUNDED') {
+      notificationsStore.pushToast({
+        tone: 'success',
+        source: 'funding',
+        dedupeKey: `funding-state-funded-${dealId}`,
+        message: 'Escrow funded successfully.',
+      })
+      stopPolling()
+      return
+    }
+    if (state === 'FAILED') {
+      notificationsStore.pushToast({
+        tone: 'danger',
+        source: 'funding',
+        dedupeKey: `funding-state-failed-${dealId}`,
+        message: 'Escrow funding failed. Please review and retry.',
+      })
+      stopPolling()
+    }
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to fetch escrow status'
+    fundingError.value = err instanceof Error ? err.message : 'Failed to fetch escrow status'
+    notificationsStore.pushToast({
+      tone: 'warning',
+      source: 'funding',
+      dedupeKey: `funding-poll-${dealId}-${fundingError.value}`,
+      message: fundingError.value,
+    })
+  }
+}
+
+const stopPolling = () => {
+  if (poller.value) {
+    window.clearInterval(poller.value)
+    poller.value = null
   }
 }
 
@@ -134,6 +196,7 @@ const startPolling = () => {
 
 watch(walletMissing, (missing) => {
   if (missing) {
+    stopPolling()
     openWalletGate()
     return
   }
@@ -154,9 +217,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  if (poller.value) {
-    window.clearInterval(poller.value)
-  }
+  stopPolling()
 })
 </script>
 

@@ -1,4 +1,5 @@
 import { RouterLinkStub, flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -27,15 +28,19 @@ vi.mock('../services/listings', () => ({
 import MarketplaceView from '../views/MarketplaceView.vue'
 
 describe('MarketplaceView structured filters and display', () => {
-  const mountView = () =>
-    mount(MarketplaceView, {
+  const mountView = () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    return mount(MarketplaceView, {
       global: {
+        plugins: [pinia],
         stubs: {
           teleport: true,
           RouterLink: RouterLinkStub,
         },
       },
     })
+  }
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -153,5 +158,27 @@ describe('MarketplaceView structured filters and display', () => {
       creative_media_type: 'image',
       creative_media_ref: 'file-123',
     })
+  })
+
+  it('keeps modal-origin upload errors in modal scope', async () => {
+    mocks.uploadCreativeMock.mockRejectedValueOnce(new Error('Upload failed in modal'))
+    const wrapper = mountView()
+    await flushPromises()
+
+    const formatButton = wrapper.findAll('button').find((button) => button.text().includes('exclusive'))
+    await formatButton!.trigger('click')
+    await flushPromises()
+
+    const file = new File(['img'], 'creative.jpg', { type: 'image/jpeg' })
+    const fileInput = wrapper.find('input[type="file"]')
+    Object.defineProperty(fileInput.element, 'files', {
+      value: [file],
+      configurable: true,
+    })
+    await fileInput.trigger('change')
+    await flushPromises()
+
+    expect(wrapper.find('.tg-modal__body').text()).toContain('Upload failed in modal')
+    expect(wrapper.text()).not.toContain("Couldn't load listings")
   })
 })

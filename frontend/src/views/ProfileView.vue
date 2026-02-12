@@ -33,6 +33,7 @@
 
       <TgStatePanel
         v-if="authStore.error"
+        tone="danger"
         title="Unable to save your role"
         :description="authStore.error"
       >
@@ -67,7 +68,7 @@
         Connect wallet, then you will be sent back to funding.
       </p>
 
-      <TgStatePanel v-if="walletError" title="Wallet connection failed" :description="walletError">
+      <TgStatePanel v-if="walletError" tone="danger" title="Wallet connection failed" :description="walletError">
         <template #icon>!</template>
       </TgStatePanel>
     </TgCard>
@@ -83,10 +84,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { TgBadge, TgButton, TgCard, TgStatePanel } from '../components/tg'
 import { usersService } from '../services/users'
 import { useAuthStore } from '../stores/auth'
+import { useNotificationsStore } from '../stores/notifications'
 import type { RolePreference } from '../types/api'
 import { toWalletFriendlyAddress } from '../utils/tonAddress'
 
 const authStore = useAuthStore()
+const notificationsStore = useNotificationsStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -135,7 +138,14 @@ const selectRole = async (role: RolePreference) => {
   }
   selectingRole.value = role
   try {
-    await authStore.setPreferredRole(role)
+    const updated = await authStore.setPreferredRole(role)
+    if (updated) {
+      notificationsStore.pushToast({
+        tone: 'success',
+        source: 'profile-role',
+        message: 'Role preference updated.',
+      })
+    }
   } finally {
     selectingRole.value = null
   }
@@ -154,6 +164,10 @@ const ensureTonUi = (): TonConnectUI | null => {
 
   tonUi.value = new TonConnectUI({
     manifestUrl,
+    actionsConfiguration: {
+      modals: [],
+      notifications: [],
+    },
   })
 
   unsubscribeWalletStatus = tonUi.value.onStatusChange(
@@ -216,6 +230,11 @@ const handleWalletStatus = async (wallet: Wallet | null) => {
     pendingChallenge.value = null
     tonUi.value?.setConnectRequestParameters(null)
     await authStore.fetchMe()
+    notificationsStore.pushToast({
+      tone: 'success',
+      source: 'profile-wallet',
+      message: 'Wallet connected successfully.',
+    })
 
     if (nextPath.value && authStore.user?.has_wallet) {
       await router.push(nextPath.value)

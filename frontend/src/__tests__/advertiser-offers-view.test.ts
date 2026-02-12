@@ -103,7 +103,7 @@ describe('AdvertiserOffersView inbox and accept redirect', () => {
     await acceptButton!.trigger('click')
     await flushPromises()
 
-    await wrapper.find('input[placeholder="Ad copy"]').setValue('Draft text')
+    await wrapper.find('textarea.offer__textarea').setValue('Draft text')
     await wrapper.find('select.offers__select').setValue('video')
 
     const file = new File(['img'], 'creative.jpg', { type: 'image/jpeg' })
@@ -133,5 +133,48 @@ describe('AdvertiserOffersView inbox and accept redirect', () => {
       creative_media_ref: 'file-ref',
     })
     expect(mocks.pushMock).toHaveBeenCalledWith('/deals/41')
+  })
+
+  it('keeps accept-modal failures in modal scope', async () => {
+    mocks.acceptMock.mockRejectedValueOnce(new Error('Accept failed in modal'))
+
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(AdvertiserOffersView, {
+      global: {
+        plugins: [pinia],
+        stubs: {
+          teleport: true,
+        },
+      },
+    })
+
+    await flushPromises()
+
+    const acceptButton = wrapper
+      .findAll('button')
+      .find((button) => button.text().trim() === 'Accept + create deal')
+    await acceptButton!.trigger('click')
+    await flushPromises()
+
+    await wrapper.find('textarea.offer__textarea').setValue('Draft text')
+
+    const file = new File(['img'], 'creative.jpg', { type: 'image/jpeg' })
+    const fileInput = wrapper.find('input[type="file"]')
+    Object.defineProperty(fileInput.element, 'files', {
+      value: [file],
+      configurable: true,
+    })
+    await fileInput.trigger('change')
+    await flushPromises()
+
+    const createDealButton = wrapper
+      .findAll('button')
+      .find((button) => button.text().trim() === 'Create draft deal')
+    await createDealButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.tg-modal__body').text()).toContain('Accept failed in modal')
+    expect(wrapper.text()).not.toContain("Couldn't load offers")
   })
 })
