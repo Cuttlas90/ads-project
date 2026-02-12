@@ -36,7 +36,7 @@ test('profile keeps role selection optional when wallet is not connected', async
 
   await page.goto('/profile')
 
-  await expect(page.getByRole('button', { name: 'Connect TON Wallet' })).toBeVisible()
+  await expect(page.locator('#profile-tonconnect-button')).toBeVisible()
   await page.getByRole('button', { name: "I'm an Advertiser" }).click()
   await expect(page).toHaveURL(/\/profile$/)
 })

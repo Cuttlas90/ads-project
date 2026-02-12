@@ -6,9 +6,9 @@
         <TgBadge :tone="currentRole ? 'success' : 'warning'">{{ currentRoleLabel }}</TgBadge>
       </div>
 
-      <p class="profile__copy">
+      <!-- <p class="profile__copy">
         Choose your role to continue. You can change this role anytime from Profile.
-      </p>
+      </p> -->
 
       <div class="profile__actions">
         <TgButton
@@ -41,7 +41,8 @@
       </TgStatePanel>
     </TgCard>
 
-    <TgCard title="TON wallet" subtitle="Connect wallet ownership proof for payouts and refunds.">
+    <!-- <TgCard title="TON wallet" subtitle="Connect wallet ownership proof for payouts and refunds."> -->
+    <TgCard title="TON wallet" subtitle="Funding requires a connected wallet.">
       <div class="profile__status">
         <span class="profile__label">Wallet status</span>
         <TgBadge :tone="hasWallet ? 'success' : 'warning'">
@@ -49,16 +50,14 @@
         </TgBadge>
       </div>
 
-      <p class="profile__copy">
-        Wallet setup is optional for role selection, but funding requires a connected wallet.
-      </p>
+      <!-- <p class="profile__copy">
+        Funding requires a connected wallet.
+      </p> -->
 
-      <code v-if="walletDisplayAddress" class="profile__wallet">{{ walletDisplayAddress }}</code>
+      <!-- <code v-if="walletDisplayAddress" class="profile__wallet">{{ walletDisplayAddress }}</code> -->
 
       <div class="profile__actions">
-        <TgButton full-width :loading="walletLoading" @click="startWalletProof">
-          {{ hasWallet ? 'Update TON Wallet' : 'Connect TON Wallet' }}
-        </TgButton>
+        <div id="profile-tonconnect-button" class="profile__tonconnect" />
         <TgButton v-if="nextPath && hasWallet" full-width variant="secondary" @click="goToNextPath">
           Return to Funding
         </TgButton>
@@ -98,6 +97,9 @@ const walletLoading = ref(false)
 const walletError = ref('')
 const pendingChallenge = ref<string | null>(null)
 const tonUi = ref<TonConnectUI | null>(null)
+const preparingChallenge = ref(false)
+
+const TONCONNECT_BUTTON_ROOT_ID = 'profile-tonconnect-button'
 
 let unsubscribeWalletStatus: (() => void) | null = null
 
@@ -164,6 +166,7 @@ const ensureTonUi = (): TonConnectUI | null => {
 
   tonUi.value = new TonConnectUI({
     manifestUrl,
+    buttonRootId: TONCONNECT_BUTTON_ROOT_ID,
     actionsConfiguration: {
       modals: [],
       notifications: [],
@@ -179,11 +182,12 @@ const ensureTonUi = (): TonConnectUI | null => {
         return
       }
       walletError.value = error.message
-      pendingChallenge.value = null
-      tonUi.value?.setConnectRequestParameters(null)
+      resetWalletConnectRequest()
+      void prepareWalletProofChallenge()
     },
   )
 
+  void prepareWalletProofChallenge()
   return tonUi.value
 }
 
@@ -195,14 +199,54 @@ const extractTonProof = (wallet: Wallet | null): TonProofItemReplySuccess['proof
   return tonProof.proof
 }
 
+const resetWalletConnectRequest = () => {
+  pendingChallenge.value = null
+  tonUi.value?.setConnectRequestParameters(null)
+}
+
+const prepareWalletProofChallenge = async () => {
+  const ui = tonUi.value
+  if (!ui || preparingChallenge.value) {
+    return
+  }
+
+  preparingChallenge.value = true
+  try {
+    ui.setConnectRequestParameters({ state: 'loading' })
+    const challenge = await usersService.issueWalletChallenge()
+    pendingChallenge.value = challenge.challenge
+    ui.setConnectRequestParameters({
+      state: 'ready',
+      value: {
+        tonProof: challenge.challenge,
+      },
+    })
+  } catch (error) {
+    walletError.value = error instanceof Error ? error.message : 'Failed to prepare wallet proof'
+    resetWalletConnectRequest()
+  } finally {
+    preparingChallenge.value = false
+  }
+}
+
 const handleWalletStatus = async (wallet: Wallet | null) => {
-  const challenge = pendingChallenge.value
-  if (!challenge) {
+  if (!wallet) {
+    await prepareWalletProofChallenge()
     return
   }
 
   const proof = extractTonProof(wallet)
-  if (!wallet || !proof) {
+  const challenge = pendingChallenge.value
+  if (!proof || !challenge || proof.payload !== challenge) {
+    const currentAddress = (authStore.user?.ton_wallet_address ?? '').trim()
+    const connectedAddress = wallet.account.address.trim()
+    if (currentAddress && connectedAddress && currentAddress !== connectedAddress) {
+      walletError.value = 'Wallet changed. Disconnect and reconnect to update your saved address.'
+    }
+    return
+  }
+
+  if (walletLoading.value) {
     return
   }
 
@@ -227,8 +271,7 @@ const handleWalletStatus = async (wallet: Wallet | null) => {
       },
     })
 
-    pendingChallenge.value = null
-    tonUi.value?.setConnectRequestParameters(null)
+    resetWalletConnectRequest()
     await authStore.fetchMe()
     notificationsStore.pushToast({
       tone: 'success',
@@ -238,41 +281,13 @@ const handleWalletStatus = async (wallet: Wallet | null) => {
 
     if (nextPath.value && authStore.user?.has_wallet) {
       await router.push(nextPath.value)
-    }
-  } catch (error) {
-    walletError.value = error instanceof Error ? error.message : 'Wallet verification failed'
-    pendingChallenge.value = null
-    tonUi.value?.setConnectRequestParameters(null)
-  } finally {
-    walletLoading.value = false
-  }
-}
-
-const startWalletProof = async () => {
-  walletLoading.value = true
-  walletError.value = ''
-
-  try {
-    const ui = ensureTonUi()
-    if (!ui) {
       return
     }
-
-    const challenge = await usersService.issueWalletChallenge()
-    pendingChallenge.value = challenge.challenge
-
-    ui.setConnectRequestParameters({
-      state: 'ready',
-      value: {
-        tonProof: challenge.challenge,
-      },
-    })
-
-    await ui.openModal()
+    await prepareWalletProofChallenge()
   } catch (error) {
-    walletError.value = error instanceof Error ? error.message : 'Failed to connect wallet'
-    pendingChallenge.value = null
-    tonUi.value?.setConnectRequestParameters(null)
+    walletError.value = error instanceof Error ? error.message : 'Wallet verification failed'
+    resetWalletConnectRequest()
+    await prepareWalletProofChallenge()
   } finally {
     walletLoading.value = false
   }
@@ -292,7 +307,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   unsubscribeWalletStatus?.()
   unsubscribeWalletStatus = null
-  tonUi.value?.setConnectRequestParameters(null)
+  resetWalletConnectRequest()
 })
 </script>
 
@@ -334,6 +349,11 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 0.75rem;
   margin-top: 1rem;
+}
+
+.profile__tonconnect {
+  display: flex;
+  justify-content: center;
 }
 
 .profile__next-copy {
