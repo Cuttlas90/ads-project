@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import logging
+from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
@@ -78,6 +79,7 @@ async def verify_channel(
     _log_phase(channel_id=channel_id, phase="bot_check", status="ok")
 
     boosts_status = None
+    statistics_payload: dict[str, Any] = {}
     phase = "telethon_connect"
     try:
         _log_phase(channel_id=channel_id, phase=phase, status="start")
@@ -95,6 +97,26 @@ async def verify_channel(
         full_response = await client(functions.channels.GetFullChannelRequest(channel=input_entity))
         stats_response = await client(functions.stats.GetBroadcastStatsRequest(channel=input_entity))
         _log_phase(channel_id=channel_id, phase=phase, status="ok")
+
+        phase = "stats_async_graph_fetch"
+        _log_phase(channel_id=channel_id, phase=phase, status="start")
+        try:
+            statistics_payload = _to_dict(stats_response) or {}
+            statistics_payload = await _resolve_async_graphs(
+                client=client,
+                payload=statistics_payload,
+                channel_id=channel_id,
+            )
+            _log_phase(channel_id=channel_id, phase=phase, status="ok")
+        except Exception as exc:
+            _log_phase(
+                channel_id=channel_id,
+                phase=phase,
+                status="failed",
+                reason="async_graph_resolution_failed",
+                error=exc,
+            )
+            statistics_payload = _to_dict(stats_response) or {}
 
         # Boost status provides premium audience metrics when broadcast stats omit premium graph.
         phase = "boosts_fetch"
@@ -147,19 +169,19 @@ async def verify_channel(
     avg_views = _coerce_int(
         getattr(getattr(stats_response, "views_per_post", None), "current", None)
     )
-    language_stats = _to_dict(getattr(stats_response, "languages_graph", None))
+    boosts_status_raw = _to_dict(boosts_status)
+    language_stats = _to_dict(statistics_payload.get("languages_graph"))
     premium_stats = _extract_premium_stats(
-        stats_response=stats_response,
-        boosts_status=boosts_status,
+        premium_graph=statistics_payload.get("premium_graph"),
+        boosts_status=boosts_status_raw,
     )
 
     full_chat_id = getattr(getattr(full_response, "full_chat", None), "id", None)
     chat_id, chat_username, chat_title = _extract_chat_info(full_response)
-    boosts_status_raw = _to_dict(boosts_status)
 
     raw_stats = {
         "full_channel": _to_dict(full_response),
-        "statistics": _to_dict(stats_response),
+        "statistics": statistics_payload,
         "boosts_status": boosts_status_raw,
         "bot_chat_member": permission_result.raw_member,
         "bot_permission_details": permission_result.permission_details,
@@ -229,6 +251,73 @@ async def _resolve_input_entity(client, channel_ref):
     return await _maybe_await(get_input_entity(channel_ref))
 
 
+async def _resolve_async_graphs(*, client, payload: dict[str, Any], channel_id: int) -> dict[str, Any]:
+    return await _resolve_async_graph_node(
+        client=client,
+        value=payload,
+        channel_id=channel_id,
+        seen_tokens=set(),
+    )
+
+
+async def _resolve_async_graph_node(
+    *,
+    client,
+    value: Any,
+    channel_id: int,
+    seen_tokens: set[str],
+) -> Any:
+    if isinstance(value, dict):
+        marker = _coerce_str(value.get("_"))
+        if marker == "StatsGraphAsync":
+            token = _coerce_str(value.get("token")) or _coerce_str(value.get("zoom_token"))
+            if token is None:
+                return value
+            if token in seen_tokens:
+                return value
+            seen_tokens.add(token)
+            try:
+                loaded_graph = await client(functions.stats.LoadAsyncGraphRequest(token=token))
+            except Exception as exc:
+                _log_phase(
+                    channel_id=channel_id,
+                    phase="stats_async_graph_fetch",
+                    status="failed",
+                    reason="async_graph_load_failed",
+                    error=exc,
+                )
+                return value
+            return await _resolve_async_graph_node(
+                client=client,
+                value=_to_dict(loaded_graph),
+                channel_id=channel_id,
+                seen_tokens=seen_tokens,
+            )
+
+        resolved: dict[str, Any] = {}
+        for key, nested in value.items():
+            resolved[str(key)] = await _resolve_async_graph_node(
+                client=client,
+                value=nested,
+                channel_id=channel_id,
+                seen_tokens=seen_tokens,
+            )
+        return resolved
+
+    if isinstance(value, list):
+        return [
+            await _resolve_async_graph_node(
+                client=client,
+                value=nested,
+                channel_id=channel_id,
+                seen_tokens=seen_tokens,
+            )
+            for nested in value
+        ]
+
+    return value
+
+
 def _extract_chat_info(full_response) -> tuple[int | None, str | None, str | None]:
     chats = getattr(full_response, "chats", None) or []
     for chat in chats:
@@ -258,10 +347,14 @@ def _coerce_int(value) -> int | None:
         return None
 
 
-def _extract_premium_stats(*, stats_response, boosts_status) -> dict | None:
-    premium_graph = _to_dict(getattr(stats_response, "premium_graph", None))
-    premium_audience = _to_dict(getattr(boosts_status, "premium_audience", None))
+def _extract_premium_stats(*, premium_graph, boosts_status) -> dict | None:
+    premium_graph = _to_dict(premium_graph)
     boosts_status_raw = _to_dict(boosts_status)
+    premium_audience = (
+        _to_dict(boosts_status_raw.get("premium_audience"))
+        if isinstance(boosts_status_raw, dict)
+        else None
+    )
 
     premium_ratio = _extract_premium_ratio(premium_graph)
     if premium_ratio is None:
@@ -302,6 +395,13 @@ def _coerce_float(value) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _coerce_str(value) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 async def _maybe_await(value):

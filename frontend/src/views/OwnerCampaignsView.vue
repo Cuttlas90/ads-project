@@ -1,15 +1,60 @@
 <template>
   <section class="owner-campaigns">
     <TgCard title="Campaigns" subtitle="Browse active campaigns and apply from verified channels.">
-      <div class="owner-campaigns__search">
+      <div class="owner-campaigns__filters-toggle">
+        <TgButton
+          size="sm"
+          variant="ghost"
+          :aria-expanded="(!filtersCollapsed).toString()"
+          aria-controls="owner-campaigns-filters"
+          @click="filtersCollapsed = !filtersCollapsed"
+        >
+          {{ filtersCollapsed ? 'Show filters' : 'Hide filters' }}
+        </TgButton>
+      </div>
+
+      <div v-if="!filtersCollapsed" id="owner-campaigns-filters" class="owner-campaigns__filters">
         <TgInput
           v-model="search"
           label="Search"
           placeholder="Title or brief"
           @keyup.enter="loadCampaigns"
         />
+        <div class="owner-campaigns__filter-row">
+          <TgInput
+            v-model="minBudgetTon"
+            label="Min budget (TON)"
+            placeholder="e.g. 5"
+            type="number"
+          />
+          <TgInput
+            v-model="maxBudgetTon"
+            label="Max budget (TON)"
+            placeholder="e.g. 50"
+            type="number"
+          />
+        </div>
+        <!-- <TgInput
+          v-model="preferredLanguage"
+          label="Preferred language"
+          placeholder="e.g. en"
+        /> -->
+        <div class="owner-campaigns__filter-row">
+          <TgInput
+            v-model="maxRequiredSubscribers"
+            label="Max required subscribers"
+            placeholder="e.g. 50000"
+            type="number"
+          />
+          <!-- <TgInput
+            v-model="maxRequiredAvgViews"
+            label="Max required avg views"
+            placeholder="e.g. 5000"
+            type="number"
+          /> -->
+        </div>
         <TgButton full-width :loading="campaignsStore.loadingDiscover" @click="loadCampaigns">
-          Search
+          Apply filters
         </TgButton>
       </div>
 
@@ -30,8 +75,13 @@
           v-for="campaign in discoverItems"
           :key="campaign.id"
           :title="campaign.title"
-          :subtitle="`Max accepts: ${campaign.max_acceptances}`"
         >
+        <!-- <TgCard
+          v-for="campaign in discoverItems"
+          :key="campaign.id"
+          :title="campaign.title"
+          :subtitle="`Max accepts: ${campaign.max_acceptances}`"
+        > -->
           <p class="owner-campaigns__brief">{{ campaign.brief }}</p>
           <p class="owner-campaigns__meta">
             Budget: {{ campaign.budget_ton ?? '--' }} TON · Min subs: {{ campaign.min_subscribers ?? '--' }}
@@ -89,7 +139,7 @@
       <TgStatePanel
         v-else-if="!campaignsStore.loadingDiscover && !campaignsStore.error"
         title="No campaigns found"
-        description="Try a different search or check back soon."
+        description="Try different filters or check back soon."
       />
     </TgCard>
   </section>
@@ -113,13 +163,79 @@ interface ApplyForm {
 const campaignsStore = useCampaignsStore()
 const channelsStore = useChannelsStore()
 
+const filtersCollapsed = ref(true)
 const search = ref('')
+const minBudgetTon = ref('')
+const maxBudgetTon = ref('')
+const preferredLanguage = ref('')
+const maxRequiredSubscribers = ref('')
+const maxRequiredAvgViews = ref('')
 const applyingCampaignId = ref<number | null>(null)
 const forms = reactive<Record<number, ApplyForm>>({})
 const successByCampaign = reactive<Record<number, string>>({})
 
-const discoverItems = computed(() => campaignsStore.discoverPage?.items ?? [])
+const rawDiscoverItems = computed(() => campaignsStore.discoverPage?.items ?? [])
 const verifiedChannels = computed(() => channelsStore.items.filter((channel) => channel.is_verified))
+
+const toNumber = (value: string): number | null => {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const parsed = Number(trimmed)
+  if (!Number.isFinite(parsed)) return null
+  return parsed
+}
+
+const toCampaignBudgetTon = (value: string | null | undefined): number | null => {
+  if (!value) return null
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return null
+  return parsed
+}
+
+const discoverItems = computed(() => {
+  const minBudget = toNumber(minBudgetTon.value)
+  const maxBudget = toNumber(maxBudgetTon.value)
+  const language = preferredLanguage.value.trim().toLowerCase()
+  const maxSubscribers = toNumber(maxRequiredSubscribers.value)
+  const maxAvgViews = toNumber(maxRequiredAvgViews.value)
+
+  return rawDiscoverItems.value.filter((campaign) => {
+    const budget = toCampaignBudgetTon(campaign.budget_ton)
+    if (minBudget !== null && (budget === null || budget < minBudget)) {
+      return false
+    }
+    if (maxBudget !== null && (budget === null || budget > maxBudget)) {
+      return false
+    }
+
+    if (language) {
+      const campaignLanguage = (campaign.preferred_language ?? '').toLowerCase()
+      if (!campaignLanguage.includes(language)) {
+        return false
+      }
+    }
+
+    if (
+      maxSubscribers !== null &&
+      campaign.min_subscribers !== null &&
+      campaign.min_subscribers !== undefined &&
+      campaign.min_subscribers > maxSubscribers
+    ) {
+      return false
+    }
+
+    if (
+      maxAvgViews !== null &&
+      campaign.min_avg_views !== null &&
+      campaign.min_avg_views !== undefined &&
+      campaign.min_avg_views > maxAvgViews
+    ) {
+      return false
+    }
+
+    return true
+  })
+})
 
 const formFor = (campaignId: number): ApplyForm => {
   if (!forms[campaignId]) {
@@ -180,10 +296,21 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.owner-campaigns__search {
+.owner-campaigns__filters-toggle {
+  display: flex;
+  margin-bottom: 0.75rem;
+}
+
+.owner-campaigns__filters {
   display: grid;
   gap: 0.75rem;
   margin-bottom: 1rem;
+}
+
+.owner-campaigns__filter-row {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
 }
 
 .owner-campaigns__list {

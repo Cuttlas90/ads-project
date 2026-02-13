@@ -121,4 +121,70 @@ describe('OwnerCampaignsView apply channel picker', () => {
       }),
     )
   })
+
+  it('starts with filters collapsed and applies local campaign filters when expanded', async () => {
+    mocks.discoverMock.mockResolvedValueOnce({
+      page: 1,
+      page_size: 20,
+      total: 2,
+      items: [
+        {
+          id: 101,
+          advertiser_id: 11,
+          title: 'Low Budget Campaign',
+          brief: 'Need post',
+          budget_ton: '10.00',
+          preferred_language: 'en',
+          min_subscribers: 800,
+          min_avg_views: 200,
+          max_acceptances: 10,
+          created_at: '2026-02-09T00:00:00Z',
+          updated_at: '2026-02-09T00:00:00Z',
+        },
+        {
+          id: 102,
+          advertiser_id: 11,
+          title: 'High Budget Campaign',
+          brief: 'Need story',
+          budget_ton: '35.00',
+          preferred_language: 'en',
+          min_subscribers: 400,
+          min_avg_views: 150,
+          max_acceptances: 10,
+          created_at: '2026-02-09T00:00:00Z',
+          updated_at: '2026-02-09T00:00:00Z',
+        },
+      ],
+    })
+
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(OwnerCampaignsView, {
+      global: {
+        plugins: [pinia],
+      },
+    })
+
+    await flushPromises()
+
+    expect(wrapper.find('.owner-campaigns__filters').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Low Budget Campaign')
+    expect(wrapper.text()).toContain('High Budget Campaign')
+
+    const showFiltersButton = wrapper.findAll('button').find((button) => button.text().includes('Show filters'))
+    expect(showFiltersButton).toBeDefined()
+    await showFiltersButton!.trigger('click')
+    await flushPromises()
+
+    const filterPanel = wrapper.find('#owner-campaigns-filters')
+    expect(filterPanel.exists()).toBe(true)
+
+    await filterPanel.find('input[placeholder="e.g. 5"]').setValue('20')
+    await filterPanel.find('input[placeholder="e.g. en"]').setValue('en')
+    await filterPanel.find('input[placeholder="e.g. 50000"]').setValue('500')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Low Budget Campaign')
+    expect(wrapper.text()).toContain('High Budget Campaign')
+  })
 })

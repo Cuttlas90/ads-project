@@ -54,7 +54,7 @@
 
 .app-main {
   flex: 1;
-  padding: 1.25rem 1.5rem 5rem;
+  padding: 1.25rem 1.5rem 6.35rem;
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
@@ -68,15 +68,22 @@
 
 .app-bottomnav {
   position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding: 0.75rem 1.5rem calc(0.75rem + env(safe-area-inset-bottom));
-  background: rgba(255, 255, 255, 0.94);
-  border-top: 1px solid rgba(20, 20, 20, 0.08);
+  bottom: 0.65rem;
+  left: 0.85rem;
+  right: 0.85rem;
+  padding: 0.5rem 0.55rem calc(0.5rem + env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 249, 253, 0.95));
+  border: 1px solid rgba(27, 77, 113, 0.15);
+  border-radius: 22px;
+  box-shadow:
+    0 15px 36px rgba(22, 58, 90, 0.2),
+    0 2px 0 rgba(255, 255, 255, 0.55) inset;
+  backdrop-filter: blur(16px);
   display: flex;
-  justify-content: space-around;
-  gap: 0.75rem;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.25rem;
+  z-index: 30;
 }
 
 @media (min-width: 720px) {
@@ -86,9 +93,10 @@
   }
   .app-bottomnav {
     left: 50%;
+    right: auto;
     transform: translateX(-50%);
     max-width: 960px;
-    border-radius: 18px 18px 0 0;
+    width: calc(100% - 2rem);
   }
   .app-top-notifications {
     max-width: 960px;

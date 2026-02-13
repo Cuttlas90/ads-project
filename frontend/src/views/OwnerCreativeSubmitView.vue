@@ -10,12 +10,12 @@
 
         <label class="creative__upload">
           <span>Media file</span>
-          <input type="file" accept="image/*,video/*" @change="handleFile" />
+          <input type="file" accept="image/*,video/*" :disabled="uploadingMedia || submitting" @change="handleFile" />
         </label>
 
         <TgBadge v-if="uploadStatus" tone="success">{{ uploadStatus }}</TgBadge>
 
-        <TgButton full-width :loading="loading" @click="submitCreative"
+        <TgButton full-width :loading="uploadingMedia || submitting" :disabled="uploadingMedia" @click="submitCreative"
           >Submit for approval</TgButton
         >
       </div>
@@ -37,13 +37,15 @@ const creativeText = ref('')
 const creativeMediaType = ref('')
 const creativeMediaRef = ref('')
 const uploadStatus = ref('')
-const loading = ref(false)
+const uploadingMedia = ref(false)
+const submitting = ref(false)
 const error = ref('')
 
 const handleFile = async (event: Event) => {
   const file = (event.target as HTMLInputElement).files?.[0]
   if (!file) return
-  loading.value = true
+  uploadingMedia.value = true
+  uploadStatus.value = ''
   error.value = ''
   try {
     const response = await dealsService.uploadCreative(dealId, file)
@@ -53,16 +55,19 @@ const handleFile = async (event: Event) => {
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Upload failed'
   } finally {
-    loading.value = false
+    uploadingMedia.value = false
   }
 }
 
 const submitCreative = async () => {
+  if (uploadingMedia.value) {
+    return
+  }
   if (!creativeText.value.trim() || !creativeMediaRef.value || !creativeMediaType.value) {
     error.value = 'Please add text and upload media before submitting.'
     return
   }
-  loading.value = true
+  submitting.value = true
   error.value = ''
   try {
     await dealsService.submitCreative(dealId, {
@@ -74,7 +79,7 @@ const submitCreative = async () => {
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Submit failed'
   } finally {
-    loading.value = false
+    submitting.value = false
   }
 }
 </script>

@@ -85,6 +85,12 @@ describe('MarketplaceView structured filters and display', () => {
     expect(wrapper.text()).toContain('exclusive')
     expect(wrapper.text()).toContain('retention')
     expect(mocks.listMarketplaceMock).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('.marketplace__filters').exists()).toBe(false)
+
+    const showFiltersButton = wrapper.findAll('button').find((button) => button.text().includes('Show filters'))
+    expect(showFiltersButton).toBeDefined()
+    await showFiltersButton!.trigger('click')
+    await flushPromises()
 
     const placementSelect = wrapper.find('select.marketplace__select')
     await placementSelect.setValue('story')
@@ -112,6 +118,20 @@ describe('MarketplaceView structured filters and display', () => {
     })
   })
 
+  it('starts with filters collapsed and lets users expand them', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.find('.marketplace__filters').exists()).toBe(false)
+
+    const showFiltersButton = wrapper.findAll('button').find((button) => button.text().includes('Show filters'))
+    expect(showFiltersButton).toBeDefined()
+    await showFiltersButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.marketplace__filters').exists()).toBe(true)
+  })
+
   it('enforces upload-first start deal and submits using upload response media fields', async () => {
     const wrapper = mountView()
     await flushPromises()
@@ -129,8 +149,9 @@ describe('MarketplaceView structured filters and display', () => {
     startButton = wrapper.find('.tg-modal__footer .tg-button')
     expect(startButton.attributes('disabled')).toBeDefined()
 
-    const modalSelects = wrapper.findAll('select.marketplace__select')
-    await modalSelects[1].setValue('video')
+    const mediaTypeSelect = wrapper.find('.tg-modal__body select.marketplace__select')
+    expect(mediaTypeSelect.exists()).toBe(true)
+    await mediaTypeSelect.setValue('video')
 
     const file = new File(['img'], 'creative.jpg', { type: 'image/jpeg' })
     const fileInput = wrapper.find('input[type="file"]')

@@ -129,16 +129,43 @@ class DummyStatsPercentValue:
         return {"_": "StatsPercentValue", "part": self.part, "total": self.total}
 
 
-class DummyStatsResponse:
-    def __init__(self, *, views_per_post: DummyViewsPerPost, languages_graph: DummyGraph) -> None:
-        self.views_per_post = views_per_post
-        self.languages_graph = languages_graph
+class DummyStatsGraphAsync:
+    def __init__(self, *, token: str) -> None:
+        self.token = token
 
     def to_dict(self):
-        return {
+        return {"_": "StatsGraphAsync", "token": self.token}
+
+
+class DummyStatsGraph:
+    def __init__(self, *, json_payload: dict | list | str) -> None:
+        self.json_payload = json_payload
+
+    def to_dict(self):
+        return {"_": "StatsGraph", "json": self.json_payload}
+
+
+class DummyStatsResponse:
+    def __init__(
+        self,
+        *,
+        views_per_post: DummyViewsPerPost,
+        languages_graph: DummyGraph,
+        extra_fields: dict[str, object] | None = None,
+    ) -> None:
+        self.views_per_post = views_per_post
+        self.languages_graph = languages_graph
+        self.extra_fields = dict(extra_fields or {})
+
+    def to_dict(self):
+        payload = {
             "views_per_post": self.views_per_post.to_dict(),
             "languages_graph": self.languages_graph.to_dict(),
         }
+        for key, value in self.extra_fields.items():
+            to_dict = getattr(value, "to_dict", None)
+            payload[key] = to_dict() if callable(to_dict) else value
+        return payload
 
 
 class DummyBoostsStatusResponse:
@@ -163,12 +190,14 @@ class DummyTelethonClient:
         *,
         authorized: bool = True,
         boosts_error: Exception | None = None,
+        async_graph_responses: dict[str, object] | None = None,
     ) -> None:
         self._full_response = full_response
         self._stats_response = stats_response
         self._boosts_status = boosts_status
         self._authorized = authorized
         self._boosts_error = boosts_error
+        self._async_graph_responses = dict(async_graph_responses or {})
 
     async def get_input_entity(self, channel):
         return channel
@@ -186,6 +215,13 @@ class DummyTelethonClient:
             if self._boosts_error is not None:
                 raise self._boosts_error
             return self._boosts_status
+        if name == "LoadAsyncGraphRequest":
+            token = getattr(request, "token", None)
+            if not isinstance(token, str):
+                raise AssertionError("LoadAsyncGraphRequest is missing token")
+            if token not in self._async_graph_responses:
+                raise AssertionError(f"Unexpected async graph token: {token}")
+            return self._async_graph_responses[token]
         raise AssertionError(f"Unexpected request: {name}")
 
 
@@ -198,6 +234,7 @@ def _patch_telegram(
     authorized: bool = True,
     connect_error: Exception | None = None,
     boosts_error: Exception | None = None,
+    async_graph_responses: dict[str, object] | None = None,
 ):
     dummy_client = DummyTelethonClient(
         full_response,
@@ -205,6 +242,7 @@ def _patch_telegram(
         boosts_status,
         authorized=authorized,
         boosts_error=boosts_error,
+        async_graph_responses=async_graph_responses,
     )
 
     class DummyService:
@@ -346,6 +384,72 @@ def test_verify_channel_success_creates_snapshot(client: TestClient, db_engine, 
         assert snapshot.raw_stats is not None
         assert snapshot.raw_stats["bot_chat_member"]["status"] == "administrator"
         assert snapshot.raw_stats["bot_permission_details"]["can_post_messages"] is True
+
+
+def test_verify_channel_resolves_stats_graph_async_before_persist(
+    client: TestClient, db_engine, monkeypatch
+) -> None:
+    async def fake_check_bot_permissions(_bot_api, _channel):
+        return PermissionCheckResult(
+            ok=True,
+            is_admin=True,
+            missing_permissions=[],
+            present_permissions=["can_edit_messages", "can_post_messages"],
+            permission_details={
+                "can_post_messages": True,
+                "can_edit_messages": True,
+                "can_manage_chat": True,
+            },
+            raw_member={
+                "status": "administrator",
+                "can_post_messages": True,
+                "can_edit_messages": True,
+                "can_manage_chat": True,
+            },
+        )
+
+    monkeypatch.setattr(channel_verify_service, "check_bot_permissions", fake_check_bot_permissions)
+
+    full_response = DummyFullResponse(
+        full_chat=DummyFullChat(participants_count=111, id=999),
+        chats=[DummyChat(id=999, username="UpdatedName", title="Updated Title")],
+    )
+    stats_response = DummyStatsResponse(
+        views_per_post=DummyViewsPerPost(current=222),
+        languages_graph=DummyGraph(data={"en": 80}),
+        extra_fields={"interactions_graph": DummyStatsGraphAsync(token="graph-token")},
+    )
+    _patch_telegram(
+        monkeypatch,
+        full_response,
+        stats_response,
+        async_graph_responses={
+            "graph-token": DummyStatsGraph(json_payload={"columns": [["x", 1, 2], ["y", 3, 4]]})
+        },
+    )
+
+    created = client.post(
+        "/channels",
+        json={"username": "@examplechannel"},
+        headers=_auth_headers(123),
+    )
+    channel_id = created.json()["id"]
+
+    response = client.post(
+        f"/channels/{channel_id}/verify",
+        headers=_auth_headers(123),
+    )
+
+    assert response.status_code == 200
+
+    with Session(db_engine) as session:
+        snapshot = session.exec(
+            select(ChannelStatsSnapshot).where(ChannelStatsSnapshot.channel_id == channel_id)
+        ).one()
+        assert snapshot.raw_stats is not None
+        graph = snapshot.raw_stats["statistics"]["interactions_graph"]
+        assert graph["_"] == "StatsGraph"
+        assert graph["json"] == {"columns": [["x", 1, 2], ["y", 3, 4]]}
 
 
 def test_verify_channel_derives_premium_ratio_from_boosts_status(

@@ -130,7 +130,7 @@
       <template #footer>
         <TgButton
           full-width
-          :loading="actionLoading"
+          :loading="actionLoading || uploadingEditMedia"
           :disabled="!canSubmitEdit || uploadingEditMedia"
           @click="submitEdit"
         >
@@ -518,6 +518,7 @@ const handleEditMediaFile = async (event: Event) => {
   uploadingEditMedia.value = true
   editMediaStatus.value = ''
   error.value = ''
+  editForm.creative_media_ref = ''
   try {
     const response = await dealsService.uploadProposalMedia(dealId, file)
     editForm.creative_media_ref = response.creative_media_ref

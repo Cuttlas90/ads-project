@@ -46,6 +46,7 @@ const onBackdrop = () => {
   inset: 0;
   display: grid;
   place-items: center;
+  padding: 1rem;
   z-index: 50;
 }
 
@@ -59,11 +60,15 @@ const onBackdrop = () => {
 .tg-modal__panel {
   position: relative;
   width: min(92vw, var(--tg-modal-max-width, 420px));
+  max-height: calc(100vh - 2rem);
   background: var(--app-surface);
   border-radius: var(--app-radius-lg);
   padding: 1.25rem;
   box-shadow: var(--app-shadow);
   z-index: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   animation: rise 0.2s ease-out;
 }
 
@@ -72,6 +77,7 @@ const onBackdrop = () => {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 0.75rem;
+  flex-shrink: 0;
 }
 
 .tg-modal__header h3 {
@@ -85,8 +91,16 @@ const onBackdrop = () => {
   cursor: pointer;
 }
 
+.tg-modal__body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .tg-modal__footer {
   margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--app-border);
+  flex-shrink: 0;
 }
 
 @keyframes rise {

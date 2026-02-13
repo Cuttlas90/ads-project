@@ -83,7 +83,7 @@
       <template #footer>
         <TgButton
           full-width
-          :loading="campaignsStore.accepting"
+          :loading="campaignsStore.accepting || uploadingMedia"
           :disabled="!canCreateDeal || uploadingMedia"
           @click="acceptOffer"
         >

@@ -1,7 +1,19 @@
 <template>
   <section class="marketplace">
     <TgCard title="Marketplace" subtitle="Browse channels and start a deal.">
-      <div class="marketplace__filters">
+      <div class="marketplace__filters-toggle">
+        <TgButton
+          size="sm"
+          variant="ghost"
+          :aria-expanded="(!filtersCollapsed).toString()"
+          aria-controls="marketplace-filters"
+          @click="filtersCollapsed = !filtersCollapsed"
+        >
+          {{ filtersCollapsed ? 'Show filters' : 'Hide filters' }}
+        </TgButton>
+      </div>
+
+      <div v-if="!filtersCollapsed" id="marketplace-filters" class="marketplace__filters">
         <TgInput v-model="filters.search" label="Search" placeholder="Channel name" />
         <div class="marketplace__row">
           <TgInput v-model="filters.min_price" label="Min price" type="number" />
@@ -104,7 +116,7 @@
       <template #footer>
         <TgButton
           full-width
-          :loading="creatingDeal"
+          :loading="creatingDeal || uploadingMedia"
           :disabled="!canCreateDeal || uploadingMedia"
           @click="createDeal"
         >
@@ -134,6 +146,7 @@ const listError = ref('')
 const modalError = ref('')
 const showModal = ref(false)
 const selectedFormat = ref<MarketplaceListingFormat | null>(null)
+const filtersCollapsed = ref(true)
 
 const filters = reactive({
   search: '',
@@ -321,6 +334,11 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.marketplace__filters-toggle {
+  display: flex;
+  margin-bottom: 0.75rem;
+}
+
 .marketplace__filters {
   display: grid;
   gap: 0.75rem;

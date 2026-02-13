@@ -89,4 +89,64 @@ describe('ChannelStatsView', () => {
     expect(wrapper.text()).not.toContain('interactions_graph')
     expect(wrapper.text()).not.toContain('shares_graph')
   })
+
+  it('renders male/female audience chart when gender metrics are available', async () => {
+    vi.spyOn(channelsService, 'readStats').mockResolvedValueOnce({
+      channel_id: 9,
+      channel_username: 'gender_channel',
+      channel_title: 'Gender Channel',
+      captured_at: '2026-02-08T00:00:00Z',
+      snapshot_available: true,
+      read_only: true,
+      scalar_metrics: [
+        { key: 'subscribers', availability: 'ready', value: 1000 },
+        { key: 'male_subscribers', availability: 'ready', value: 0.62 },
+        { key: 'female_subscribers', availability: 'ready', value: 0.38 },
+      ],
+      chart_metrics: [],
+      premium_audience: {
+        availability: 'missing',
+      },
+    })
+
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const authStore = useAuthStore()
+    authStore.bootstrapped = true
+    authStore.user = {
+      id: 1,
+      telegram_user_id: 10,
+      preferred_role: 'advertiser',
+      ton_wallet_address: null,
+      has_wallet: false,
+    }
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/advertiser/channels/:channelId/stats', component: ChannelStatsView },
+        { path: '/advertiser/marketplace', component: { template: '<div>marketplace</div>' } },
+      ],
+    })
+    await router.push('/advertiser/channels/9/stats')
+    await router.isReady()
+
+    const wrapper = mount(ChannelStatsView, {
+      global: {
+        plugins: [pinia, router],
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Audience by gender')
+    expect(wrapper.text()).toContain('Male')
+    expect(wrapper.text()).toContain('Female')
+    expect(wrapper.text()).toContain('62.0%')
+    expect(wrapper.text()).toContain('38.0%')
+
+    const bars = wrapper.findAll('.stats__gender-fill')
+    expect(bars).toHaveLength(2)
+    expect(bars[0].attributes('style')).toContain('width: 62%')
+    expect(bars[1].attributes('style')).toContain('width: 38%')
+  })
 })
