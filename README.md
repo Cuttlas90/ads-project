@@ -8,7 +8,7 @@ This repository contains the skeleton for a monorepo that will power a Telegram 
 - `frontend/` — Vue 3 + Vite + TypeScript frontend (skeleton only for now)
 - `infra/` — Docker Compose stack for local development
 - `shared/` — Shared Python modules (DB models/session) used by backend and bot
-- `docs/` — Project documentation
+
 
 ## Quick start
 
