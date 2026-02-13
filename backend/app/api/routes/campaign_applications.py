@@ -24,8 +24,16 @@ from app.schemas.campaigns import (
     CampaignApplicationStatsSummary,
     CampaignApplicationSummary,
 )
-from app.schemas.deals import DealCreateFromCampaignAccept, DealCreativeUploadResponse, DealSummary
+from app.schemas.deals import (
+    DealCreateFromCampaignAccept,
+    DealCreativeUploadResponse,
+    DealSummary,
+)
 from app.schemas.channel import ChannelRole
+from app.services.bot_notifications import (
+    notify_campaign_offer_accepted,
+    notify_campaign_offer_received,
+)
 from app.settings import Settings
 from shared.telegram.bot_api import BotApiService, TelegramApiError, TelegramConfigError
 
@@ -38,35 +46,49 @@ ALLOWED_MEDIA_TYPES = {"image", "video"}
 ALLOWED_PLACEMENT_TYPES = {"post", "story"}
 
 
-def _parse_int(value: str | None, *, field: str, minimum: int | None = None) -> int | None:
+def _parse_int(
+    value: str | None, *, field: str, minimum: int | None = None
+) -> int | None:
     if value is None:
         return None
     try:
         parsed = int(value)
     except (TypeError, ValueError):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}"
+        )
     if minimum is not None and parsed < minimum:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}"
+        )
     return parsed
 
 
 def _require_non_empty(value: str | None, *, field: str) -> str:
     if value is None or not value.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}"
+        )
     return value.strip()
 
 
 def _require_media_type(value: str | None) -> str:
     normalized = _require_non_empty(value, field="creative_media_type")
     if normalized not in ALLOWED_MEDIA_TYPES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid creative_media_type")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid creative_media_type",
+        )
     return normalized
 
 
 def _require_placement_type(value: str | None) -> str:
     normalized = _require_non_empty(value, field="proposed_placement_type").lower()
     if normalized not in ALLOWED_PLACEMENT_TYPES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid proposed_placement_type")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid proposed_placement_type",
+        )
     return normalized
 
 
@@ -82,9 +104,13 @@ def _resolve_price_ton(value) -> Decimal:
     try:
         normalized = Decimal(value)
     except (InvalidOperation, TypeError):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid price_ton")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid price_ton"
+        )
     if normalized <= 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid price_ton")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid price_ton"
+        )
     return normalized
 
 
@@ -120,43 +146,45 @@ def _deal_summary(deal: Deal) -> DealSummary:
     )
 
 
-def _require_owner_membership(db: Session, *, channel_id: int, user_id: int | None) -> None:
+def _require_owner_membership(
+    db: Session, *, channel_id: int, user_id: int | None
+) -> None:
     if user_id is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only channel owners may apply")
-
-    membership = (
-        db.exec(
-            select(ChannelMember)
-            .where(ChannelMember.channel_id == channel_id)
-            .where(ChannelMember.user_id == user_id)
-            .where(ChannelMember.role == ChannelRole.owner.value)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only channel owners may apply",
         )
-        .first()
-    )
+
+    membership = db.exec(
+        select(ChannelMember)
+        .where(ChannelMember.channel_id == channel_id)
+        .where(ChannelMember.user_id == user_id)
+        .where(ChannelMember.role == ChannelRole.owner.value)
+    ).first()
     if membership is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only channel owners may apply")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only channel owners may apply",
+        )
 
 
 def _latest_snapshot_subquery():
-    return (
-        select(
-            ChannelStatsSnapshot.id.label("snapshot_id"),
-            ChannelStatsSnapshot.channel_id.label("channel_id"),
-            ChannelStatsSnapshot.avg_views.label("avg_views"),
-            ChannelStatsSnapshot.language_stats.label("language_stats"),
-            ChannelStatsSnapshot.premium_stats.label("premium_stats"),
-            func.row_number()
-            .over(
-                partition_by=ChannelStatsSnapshot.channel_id,
-                order_by=(
-                    ChannelStatsSnapshot.created_at.desc(),
-                    ChannelStatsSnapshot.id.desc(),
-                ),
-            )
-            .label("rn"),
+    return select(
+        ChannelStatsSnapshot.id.label("snapshot_id"),
+        ChannelStatsSnapshot.channel_id.label("channel_id"),
+        ChannelStatsSnapshot.avg_views.label("avg_views"),
+        ChannelStatsSnapshot.language_stats.label("language_stats"),
+        ChannelStatsSnapshot.premium_stats.label("premium_stats"),
+        func.row_number()
+        .over(
+            partition_by=ChannelStatsSnapshot.channel_id,
+            order_by=(
+                ChannelStatsSnapshot.created_at.desc(),
+                ChannelStatsSnapshot.id.desc(),
+            ),
         )
-        .subquery()
-    )
+        .label("rn"),
+    ).subquery()
 
 
 def _premium_ratio_from_stats(premium_stats) -> float:
@@ -187,7 +215,9 @@ def _top_language(language_stats) -> dict[str, float] | None:
     return {str(top_key): float(top_value)}
 
 
-def _application_summary(application: CampaignApplication) -> CampaignApplicationSummary:
+def _application_summary(
+    application: CampaignApplication,
+) -> CampaignApplicationSummary:
     return CampaignApplicationSummary(
         id=application.id,
         campaign_id=application.campaign_id,
@@ -208,38 +238,60 @@ def _count_result(value: int | tuple[int]) -> int:
     return value if isinstance(value, int) else value[0]
 
 
-@router.post("/{campaign_id}/apply", response_model=CampaignApplicationSummary, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{campaign_id}/apply",
+    response_model=CampaignApplicationSummary,
+    status_code=status.HTTP_201_CREATED,
+)
 def apply_to_campaign(
     campaign_id: int,
     payload: CampaignApplicationCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings_dep),
 ) -> CampaignApplicationSummary:
     proposed_placement_type = _require_placement_type(payload.proposed_placement_type)
     proposed_exclusive_hours = payload.proposed_exclusive_hours
     proposed_retention_hours = payload.proposed_retention_hours
     if proposed_exclusive_hours < 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid proposed_exclusive_hours")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid proposed_exclusive_hours",
+        )
     if proposed_retention_hours < 1:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid proposed_retention_hours")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid proposed_retention_hours",
+        )
 
     proposed_format_label = (
         payload.proposed_format_label.strip()
-        if payload.proposed_format_label is not None and payload.proposed_format_label.strip()
+        if payload.proposed_format_label is not None
+        and payload.proposed_format_label.strip()
         else proposed_placement_type
     )
 
-    campaign = db.exec(select(CampaignRequest).where(CampaignRequest.id == campaign_id)).first()
+    campaign = db.exec(
+        select(CampaignRequest).where(CampaignRequest.id == campaign_id)
+    ).first()
     if campaign is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found"
+        )
     if campaign.lifecycle_state != CampaignLifecycleState.ACTIVE.value:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found"
+        )
 
     channel = db.exec(select(Channel).where(Channel.id == payload.channel_id)).first()
     if channel is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Channel not found"
+        )
     if not channel.is_verified:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Channel not verified")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Channel not verified"
+        )
 
     _require_owner_membership(db, channel_id=channel.id, user_id=current_user.id)
 
@@ -259,19 +311,28 @@ def apply_to_campaign(
         db.commit()
     except IntegrityError:
         db.rollback()
-        existing = (
-            db.exec(
-                select(CampaignApplication)
-                .where(CampaignApplication.campaign_id == campaign.id)
-                .where(CampaignApplication.channel_id == channel.id)
-            )
-            .first()
-        )
+        existing = db.exec(
+            select(CampaignApplication)
+            .where(CampaignApplication.campaign_id == campaign.id)
+            .where(CampaignApplication.channel_id == channel.id)
+        ).first()
         if existing is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Application already exists")
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Application conflict")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Application already exists",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Application conflict"
+        )
 
     db.refresh(application)
+    notify_campaign_offer_received(
+        db=db,
+        settings=settings,
+        advertiser_id=campaign.advertiser_id,
+        campaign_id=campaign.id,
+        application_id=application.id,
+    )
     return _application_summary(application)
 
 
@@ -288,13 +349,20 @@ def list_campaign_applications(
         .where(CampaignRequest.lifecycle_state != CampaignLifecycleState.HIDDEN.value)
     ).first()
     if campaign is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found"
+        )
     if campaign.advertiser_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized"
+        )
 
     params = request.query_params
     page = _parse_int(params.get("page"), field="page", minimum=1) or DEFAULT_PAGE
-    page_size = _parse_int(params.get("page_size"), field="page_size", minimum=1) or DEFAULT_PAGE_SIZE
+    page_size = (
+        _parse_int(params.get("page_size"), field="page_size", minimum=1)
+        or DEFAULT_PAGE_SIZE
+    )
 
     snapshot_subq = _latest_snapshot_subquery()
     stmt = (
@@ -325,13 +393,22 @@ def list_campaign_applications(
 
     offset = (page - 1) * page_size
     rows = db.exec(
-        stmt.order_by(CampaignApplication.created_at.desc(), CampaignApplication.id.desc())
+        stmt.order_by(
+            CampaignApplication.created_at.desc(), CampaignApplication.id.desc()
+        )
         .limit(page_size)
         .offset(offset)
     ).all()
 
     items: list[CampaignApplicationListingItem] = []
-    for application, channel_username, channel_title, avg_views, language_stats, premium_stats in rows:
+    for (
+        application,
+        channel_username,
+        channel_title,
+        avg_views,
+        language_stats,
+        premium_stats,
+    ) in rows:
         stats = CampaignApplicationStatsSummary(
             avg_views=avg_views,
             premium_ratio=_premium_ratio_from_stats(premium_stats),
@@ -373,21 +450,37 @@ def upload_campaign_application_creative_media(
     current_user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings_dep),
 ) -> DealCreativeUploadResponse:
-    campaign = db.exec(select(CampaignRequest).where(CampaignRequest.id == campaign_id)).first()
-    if campaign is None or campaign.lifecycle_state == CampaignLifecycleState.HIDDEN.value:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+    campaign = db.exec(
+        select(CampaignRequest).where(CampaignRequest.id == campaign_id)
+    ).first()
+    if (
+        campaign is None
+        or campaign.lifecycle_state == CampaignLifecycleState.HIDDEN.value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found"
+        )
     if campaign.advertiser_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized"
+        )
 
-    application = db.exec(select(CampaignApplication).where(CampaignApplication.id == application_id)).first()
+    application = db.exec(
+        select(CampaignApplication).where(CampaignApplication.id == application_id)
+    ).first()
     if (
         application is None
         or application.campaign_id != campaign_id
         or application.hidden_at is not None
     ):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Application not found"
+        )
     if application.status != "submitted":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Application is not submitted")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Application is not submitted",
+        )
 
     content_type = file.content_type or ""
     if content_type.startswith("image/"):
@@ -395,11 +488,16 @@ def upload_campaign_application_creative_media(
     elif content_type.startswith("video/"):
         media_type = "video"
     else:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid creative_media_type")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid creative_media_type",
+        )
 
     content = file.file.read()
     if not content:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty upload")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Empty upload"
+        )
 
     service = BotApiService(settings)
     try:
@@ -409,7 +507,9 @@ def upload_campaign_application_creative_media(
             content=content,
         )
     except (TelegramApiError, TelegramConfigError) as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to upload media") from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to upload media"
+        ) from exc
 
     return DealCreativeUploadResponse(
         creative_media_ref=result["file_id"],
@@ -428,18 +528,30 @@ def accept_campaign_application(
     payload: DealCreateFromCampaignAccept,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings_dep),
 ) -> DealSummary:
     campaign = db.exec(
-        select(CampaignRequest).where(CampaignRequest.id == campaign_id).with_for_update()
+        select(CampaignRequest)
+        .where(CampaignRequest.id == campaign_id)
+        .with_for_update()
     ).first()
     if campaign is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found"
+        )
     if campaign.lifecycle_state == CampaignLifecycleState.HIDDEN.value:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found"
+        )
     if campaign.lifecycle_state == CampaignLifecycleState.CLOSED_BY_LIMIT.value:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Campaign acceptance limit reached")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Campaign acceptance limit reached",
+        )
     if campaign.advertiser_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized"
+        )
 
     application = db.exec(
         select(CampaignApplication)
@@ -451,15 +563,22 @@ def accept_campaign_application(
         or application.campaign_id != campaign_id
         or application.hidden_at is not None
     ):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Application not found"
+        )
     if application.status != "submitted":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Application is not submitted")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Application is not submitted",
+        )
 
     existing_application = db.exec(
         select(Deal).where(Deal.campaign_application_id == application_id)
     ).first()
     if existing_application is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Deal already exists")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Deal already exists"
+        )
 
     accepted_count_result = db.exec(
         select(func.count()).select_from(Deal).where(Deal.campaign_id == campaign_id)
@@ -484,11 +603,18 @@ def accept_campaign_application(
                     offer.message = "closed_by_limit"
                 db.add(offer)
             db.commit()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Campaign acceptance limit reached")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Campaign acceptance limit reached",
+        )
 
-    price_source = payload.price_ton if payload.price_ton is not None else campaign.budget_ton
+    price_source = (
+        payload.price_ton if payload.price_ton is not None else campaign.budget_ton
+    )
     if price_source is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid price_ton")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid price_ton"
+        )
     price_ton = _resolve_price_ton(price_source)
 
     ad_type = (
@@ -498,7 +624,9 @@ def accept_campaign_application(
     )
     creative_text = _require_non_empty(payload.creative_text, field="creative_text")
     creative_media_type = _require_media_type(payload.creative_media_type)
-    creative_media_ref = _require_non_empty(payload.creative_media_ref, field="creative_media_ref")
+    creative_media_ref = _require_non_empty(
+        payload.creative_media_ref, field="creative_media_ref"
+    )
     scheduled_at = _normalize_datetime(payload.start_at)
 
     deal = Deal(
@@ -570,7 +698,10 @@ def accept_campaign_application(
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Deal conflict")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Deal conflict"
+        )
 
     db.refresh(deal)
+    notify_campaign_offer_accepted(db=db, settings=settings, deal=deal)
     return _deal_summary(deal)

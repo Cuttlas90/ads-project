@@ -108,8 +108,15 @@ def test_post_due_deals_posts_feed_and_transitions(monkeypatch) -> None:
 
     now = datetime.now(timezone.utc)
     settings = Settings(_env_file=None)
+    notifications: list[int] = []
 
-    monkeypatch.setattr(deal_posting, "fetch_message_hash_sync", lambda **kwargs: "hash")
+    monkeypatch.setattr(
+        deal_posting, "fetch_message_hash_sync", lambda **kwargs: "hash"
+    )
+    monkeypatch.setattr(
+        "app.worker.deal_posting.notify_deal_posted",
+        lambda **kwargs: notifications.append(1),
+    )
 
     with Session(engine) as session:
         deal = _seed_deal(
@@ -121,7 +128,9 @@ def test_post_due_deals_posts_feed_and_transitions(monkeypatch) -> None:
         )
         bot_api = FakeBotApi()
 
-        processed = _post_due_deals(db=session, settings=settings, now=now, bot_api=bot_api)
+        processed = _post_due_deals(
+            db=session, settings=settings, now=now, bot_api=bot_api
+        )
         assert processed == 1
 
         updated = session.exec(select(Deal).where(Deal.id == deal.id)).one()
@@ -131,6 +140,7 @@ def test_post_due_deals_posts_feed_and_transitions(monkeypatch) -> None:
         assert updated.posted_at is not None
         assert updated.verification_window_hours == 48
         assert bot_api.calls[0]["method"] == "sendPhoto"
+        assert notifications == [1]
 
     SQLModel.metadata.drop_all(engine)
 
@@ -146,7 +156,9 @@ def test_post_due_deals_posts_story(monkeypatch) -> None:
     now = datetime.now(timezone.utc)
     settings = Settings(_env_file=None)
 
-    monkeypatch.setattr(deal_posting, "fetch_story_hash_sync", lambda **kwargs: "story-hash")
+    monkeypatch.setattr(
+        deal_posting, "fetch_story_hash_sync", lambda **kwargs: "story-hash"
+    )
 
     with Session(engine) as session:
         deal = _seed_deal(
@@ -158,7 +170,9 @@ def test_post_due_deals_posts_story(monkeypatch) -> None:
         )
         bot_api = FakeBotApi()
 
-        processed = _post_due_deals(db=session, settings=settings, now=now, bot_api=bot_api)
+        processed = _post_due_deals(
+            db=session, settings=settings, now=now, bot_api=bot_api
+        )
         assert processed == 1
 
         updated = session.exec(select(Deal).where(Deal.id == deal.id)).one()
@@ -181,7 +195,9 @@ def test_post_due_deals_skips_unfunded_creative_approved(monkeypatch) -> None:
 
     now = datetime.now(timezone.utc)
     settings = Settings(_env_file=None)
-    monkeypatch.setattr(deal_posting, "fetch_message_hash_sync", lambda **kwargs: "hash")
+    monkeypatch.setattr(
+        deal_posting, "fetch_message_hash_sync", lambda **kwargs: "hash"
+    )
 
     with Session(engine) as session:
         deal = _seed_deal(
@@ -194,7 +210,9 @@ def test_post_due_deals_skips_unfunded_creative_approved(monkeypatch) -> None:
         )
         bot_api = FakeBotApi()
 
-        processed = _post_due_deals(db=session, settings=settings, now=now, bot_api=bot_api)
+        processed = _post_due_deals(
+            db=session, settings=settings, now=now, bot_api=bot_api
+        )
         assert processed == 0
 
         updated = session.exec(select(Deal).where(Deal.id == deal.id)).one()
@@ -215,7 +233,9 @@ def test_post_due_deals_uses_fsm_transition_helper(monkeypatch) -> None:
 
     now = datetime.now(timezone.utc)
     settings = Settings(_env_file=None)
-    monkeypatch.setattr(deal_posting, "fetch_message_hash_sync", lambda **kwargs: "hash")
+    monkeypatch.setattr(
+        deal_posting, "fetch_message_hash_sync", lambda **kwargs: "hash"
+    )
 
     def _boom(*args, **kwargs):
         raise DealTransitionError("blocked")
@@ -233,7 +253,9 @@ def test_post_due_deals_uses_fsm_transition_helper(monkeypatch) -> None:
         )
         bot_api = FakeBotApi()
 
-        processed = _post_due_deals(db=session, settings=settings, now=now, bot_api=bot_api)
+        processed = _post_due_deals(
+            db=session, settings=settings, now=now, bot_api=bot_api
+        )
         assert processed == 0
 
         updated = session.exec(select(Deal).where(Deal.id == deal.id)).one()
@@ -254,7 +276,9 @@ def test_post_due_deals_normalizes_numeric_channel_id_for_bot_api(monkeypatch) -
 
     now = datetime.now(timezone.utc)
     settings = Settings(_env_file=None)
-    monkeypatch.setattr(deal_posting, "fetch_message_hash_sync", lambda **kwargs: "hash")
+    monkeypatch.setattr(
+        deal_posting, "fetch_message_hash_sync", lambda **kwargs: "hash"
+    )
 
     with Session(engine) as session:
         deal = _seed_deal(
@@ -265,14 +289,18 @@ def test_post_due_deals_normalizes_numeric_channel_id_for_bot_api(monkeypatch) -
             retention_hours=24,
             state=DealState.FUNDED.value,
         )
-        channel = session.exec(select(Channel).where(Channel.id == deal.channel_id)).one()
+        channel = session.exec(
+            select(Channel).where(Channel.id == deal.channel_id)
+        ).one()
         channel.telegram_channel_id = 2210950485
         channel.username = None
         session.add(channel)
         session.commit()
 
         bot_api = FakeBotApi()
-        processed = _post_due_deals(db=session, settings=settings, now=now, bot_api=bot_api)
+        processed = _post_due_deals(
+            db=session, settings=settings, now=now, bot_api=bot_api
+        )
 
         assert processed == 1
         assert bot_api.calls
@@ -291,7 +319,9 @@ def test_post_due_deals_prefixes_username_channel_ref(monkeypatch) -> None:
 
     now = datetime.now(timezone.utc)
     settings = Settings(_env_file=None)
-    monkeypatch.setattr(deal_posting, "fetch_message_hash_sync", lambda **kwargs: "hash")
+    monkeypatch.setattr(
+        deal_posting, "fetch_message_hash_sync", lambda **kwargs: "hash"
+    )
 
     with Session(engine) as session:
         deal = _seed_deal(
@@ -302,14 +332,18 @@ def test_post_due_deals_prefixes_username_channel_ref(monkeypatch) -> None:
             retention_hours=24,
             state=DealState.FUNDED.value,
         )
-        channel = session.exec(select(Channel).where(Channel.id == deal.channel_id)).one()
+        channel = session.exec(
+            select(Channel).where(Channel.id == deal.channel_id)
+        ).one()
         channel.telegram_channel_id = None
         channel.username = "ludex_channel"
         session.add(channel)
         session.commit()
 
         bot_api = FakeBotApi()
-        processed = _post_due_deals(db=session, settings=settings, now=now, bot_api=bot_api)
+        processed = _post_due_deals(
+            db=session, settings=settings, now=now, bot_api=bot_api
+        )
 
         assert processed == 1
         assert bot_api.calls

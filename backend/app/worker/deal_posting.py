@@ -7,7 +7,13 @@ from sqlmodel import Session, select
 
 from app.models.channel import Channel
 from app.models.deal import Deal, DealState
-from app.services.deal_fsm import DealAction, DealActorRole, DealTransitionError, apply_transition
+from app.services.bot_notifications import notify_deal_posted
+from app.services.deal_fsm import (
+    DealAction,
+    DealActorRole,
+    DealTransitionError,
+    apply_transition,
+)
 from app.services.deal_posting import DealPostingError, publish_deal_post
 from app.settings import get_settings
 from app.worker.celery_app import celery_app
@@ -42,6 +48,7 @@ def _post_due_deals(
             logger.error("Channel not found for deal", extra={"deal_id": deal.id})
             continue
 
+        notify_posted = False
         try:
             if deal.state == DealState.FUNDED.value:
                 apply_transition(
@@ -50,11 +57,17 @@ def _post_due_deals(
                     action=DealAction.schedule.value,
                     actor_id=None,
                     actor_role=DealActorRole.system.value,
-                    payload={"scheduled_at": deal.scheduled_at.isoformat() if deal.scheduled_at else None},
+                    payload={
+                        "scheduled_at": (
+                            deal.scheduled_at.isoformat() if deal.scheduled_at else None
+                        )
+                    },
                 )
 
             if deal.state == DealState.SCHEDULED.value and not deal.posted_message_id:
-                publish_deal_post(deal=deal, channel=channel, settings=settings, bot_api=bot_api)
+                publish_deal_post(
+                    deal=deal, channel=channel, settings=settings, bot_api=bot_api
+                )
                 apply_transition(
                     db,
                     deal=deal,
@@ -63,15 +76,25 @@ def _post_due_deals(
                     actor_role=DealActorRole.system.value,
                     payload={"message_id": deal.posted_message_id},
                 )
+                notify_posted = True
 
             db.add(deal)
             processed += 1
-        except (DealPostingError, DealTransitionError, TelegramApiError, TelegramConfigError) as exc:
+        except (
+            DealPostingError,
+            DealTransitionError,
+            TelegramApiError,
+            TelegramConfigError,
+        ) as exc:
             db.rollback()
-            logger.error("Deal posting failed", extra={"deal_id": deal.id, "error": str(exc)})
+            logger.error(
+                "Deal posting failed", extra={"deal_id": deal.id, "error": str(exc)}
+            )
             continue
         else:
             db.commit()
+            if notify_posted:
+                notify_deal_posted(db=db, settings=settings, deal=deal)
 
     return processed
 

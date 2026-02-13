@@ -94,7 +94,7 @@ def _seed_posted_deal(
     return deal, escrow
 
 
-def test_verify_posted_deals_releases_after_windows() -> None:
+def test_verify_posted_deals_releases_after_windows(monkeypatch) -> None:
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -108,6 +108,11 @@ def test_verify_posted_deals_releases_after_windows() -> None:
         TON_REFUND_NETWORK_FEE=Decimal("0.02"),
     )
     now = datetime.now(timezone.utc)
+    notifications: list[int] = []
+    monkeypatch.setattr(
+        "app.worker.deal_verification.notify_deal_released",
+        lambda **kwargs: notifications.append(1),
+    )
 
     def fake_transfer(**kwargs):
         return "tx_release"
@@ -130,16 +135,19 @@ def test_verify_posted_deals_releases_after_windows() -> None:
         assert processed == 1
 
         updated = session.exec(select(Deal).where(Deal.id == deal.id)).one()
-        updated_escrow = session.exec(select(DealEscrow).where(DealEscrow.id == escrow.id)).one()
+        updated_escrow = session.exec(
+            select(DealEscrow).where(DealEscrow.id == escrow.id)
+        ).one()
 
         assert updated.state == DealState.RELEASED.value
         assert updated_escrow.release_tx_hash == "tx_release"
         assert updated_escrow.released_amount_ton == Decimal("9.480000000")
+        assert notifications == [1]
 
     SQLModel.metadata.drop_all(engine)
 
 
-def test_verify_posted_deals_refunds_when_missing_before_retention() -> None:
+def test_verify_posted_deals_refunds_when_missing_before_retention(monkeypatch) -> None:
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -153,6 +161,11 @@ def test_verify_posted_deals_refunds_when_missing_before_retention() -> None:
         TON_REFUND_NETWORK_FEE=Decimal("0.02"),
     )
     now = datetime.now(timezone.utc)
+    notifications: list[int] = []
+    monkeypatch.setattr(
+        "app.worker.deal_verification.notify_deal_refunded",
+        lambda **kwargs: notifications.append(1),
+    )
 
     def fake_transfer(**kwargs):
         return "tx_refund"
@@ -175,11 +188,14 @@ def test_verify_posted_deals_refunds_when_missing_before_retention() -> None:
         assert processed == 1
 
         updated = session.exec(select(Deal).where(Deal.id == deal.id)).one()
-        updated_escrow = session.exec(select(DealEscrow).where(DealEscrow.id == escrow.id)).one()
+        updated_escrow = session.exec(
+            select(DealEscrow).where(DealEscrow.id == escrow.id)
+        ).one()
 
         assert updated.state == DealState.REFUNDED.value
         assert updated_escrow.refund_tx_hash == "tx_refund"
         assert updated_escrow.refunded_amount_ton == Decimal("9.980000000")
+        assert notifications == [1]
 
     SQLModel.metadata.drop_all(engine)
 

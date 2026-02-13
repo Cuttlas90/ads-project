@@ -10,7 +10,13 @@ from app.models.channel import Channel
 from app.models.deal import Deal, DealState
 from app.models.deal_escrow import DealEscrow
 from app.models.user import User
-from app.services.deal_fsm import DealAction, DealActorRole, DealTransitionError, apply_transition
+from app.services.bot_notifications import notify_deal_refunded, notify_deal_released
+from app.services.deal_fsm import (
+    DealAction,
+    DealActorRole,
+    DealTransitionError,
+    apply_transition,
+)
 from app.services.telegram.message_inspect import (
     fetch_message_hash_sync,
     fetch_story_hash_sync,
@@ -58,7 +64,9 @@ def _retention_deadline(deal: Deal, *, default_hours: int) -> datetime | None:
     if deal.posted_at is None:
         return None
     posted_at = _ensure_aware_utc(deal.posted_at)
-    retention_hours = deal.retention_hours or deal.verification_window_hours or default_hours
+    retention_hours = (
+        deal.retention_hours or deal.verification_window_hours or default_hours
+    )
     retention_hours = max(int(retention_hours), 1)
     return posted_at + timedelta(hours=retention_hours)
 
@@ -111,25 +119,39 @@ def _verify_posted_deals(
             default_hours=settings.VERIFICATION_WINDOW_DEFAULT_HOURS,
         )
         exclusivity_deadline = _exclusivity_deadline(deal)
-        if verification_deadline is None or retention_deadline is None or exclusivity_deadline is None:
+        if (
+            verification_deadline is None
+            or retention_deadline is None
+            or exclusivity_deadline is None
+        ):
             continue
 
         channel = db.exec(select(Channel).where(Channel.id == deal.channel_id)).first()
         if channel is None:
-            logger.error("Channel not found for verification", extra={"deal_id": deal.id})
+            logger.error(
+                "Channel not found for verification", extra={"deal_id": deal.id}
+            )
             continue
 
-        escrow = db.exec(select(DealEscrow).where(DealEscrow.deal_id == deal.id)).first()
+        escrow = db.exec(
+            select(DealEscrow).where(DealEscrow.deal_id == deal.id)
+        ).first()
         if escrow is None:
-            logger.error("Escrow not found for verification", extra={"deal_id": deal.id})
+            logger.error(
+                "Escrow not found for verification", extra={"deal_id": deal.id}
+            )
             continue
         if escrow.state != EscrowState.FUNDED.value:
-            logger.error("Escrow not funded", extra={"deal_id": deal.id, "state": escrow.state})
+            logger.error(
+                "Escrow not funded", extra={"deal_id": deal.id, "state": escrow.state}
+            )
             continue
 
         chat_id = channel.telegram_channel_id or channel.username
         if not chat_id:
-            logger.error("Channel missing telegram identifier", extra={"deal_id": deal.id})
+            logger.error(
+                "Channel missing telegram identifier", extra={"deal_id": deal.id}
+            )
             continue
 
         placement_type = _resolve_placement_type(deal)
@@ -151,7 +173,10 @@ def _verify_posted_deals(
                         message_id=posted_message_id,
                     )
             except Exception as exc:
-                logger.error("Verification fetch failed", extra={"deal_id": deal.id, "error": str(exc)})
+                logger.error(
+                    "Verification fetch failed",
+                    extra={"deal_id": deal.id, "error": str(exc)},
+                )
                 continue
 
             if current_hash is None:
@@ -159,7 +184,9 @@ def _verify_posted_deals(
             elif deal.posted_content_hash and current_hash != deal.posted_content_hash:
                 tamper_reason = "content_changed"
 
-        exclusivity_active = now <= exclusivity_deadline and max(int(deal.exclusive_hours or 0), 0) > 0
+        exclusivity_active = (
+            now <= exclusivity_deadline and max(int(deal.exclusive_hours or 0), 0) > 0
+        )
         if tamper_reason is None and exclusivity_active:
             posted_at = _ensure_aware_utc(deal.posted_at)
             try:
@@ -180,7 +207,10 @@ def _verify_posted_deals(
                         exclude_message_id=posted_message_id,
                     )
             except Exception as exc:
-                logger.error("Exclusivity check failed", extra={"deal_id": deal.id, "error": str(exc)})
+                logger.error(
+                    "Exclusivity check failed",
+                    extra={"deal_id": deal.id, "error": str(exc)},
+                )
                 continue
 
             if breached:
@@ -189,8 +219,11 @@ def _verify_posted_deals(
         if tamper_reason is None and now < verification_deadline:
             continue
 
+        refund_reason: str | None = None
+        did_release = False
         try:
             if tamper_reason is not None:
+                refund_reason = tamper_reason
                 apply_transition(
                     db,
                     deal=deal,
@@ -199,7 +232,9 @@ def _verify_posted_deals(
                     actor_role=DealActorRole.system.value,
                     payload={"reason": tamper_reason},
                 )
-                advertiser = db.exec(select(User).where(User.id == deal.advertiser_id)).first()
+                advertiser = db.exec(
+                    select(User).where(User.id == deal.advertiser_id)
+                ).first()
                 if advertiser is None:
                     raise PayoutError("Advertiser not found")
                 ensure_refund(
@@ -220,7 +255,9 @@ def _verify_posted_deals(
                     actor_role=DealActorRole.system.value,
                     payload={"verified_at": now.isoformat()},
                 )
-                owner = db.exec(select(User).where(User.id == deal.channel_owner_id)).first()
+                owner = db.exec(
+                    select(User).where(User.id == deal.channel_owner_id)
+                ).first()
                 if owner is None:
                     raise PayoutError("Channel owner not found")
                 ensure_release(
@@ -231,14 +268,35 @@ def _verify_posted_deals(
                     settings=settings,
                     transfer_fn=transfer_fn,
                 )
+                did_release = True
 
             db.add(deal)
             db.add(escrow)
             db.commit()
             processed += 1
+            if did_release:
+                notify_deal_released(
+                    db=db,
+                    settings=settings,
+                    deal=deal,
+                    released_amount_ton=escrow.released_amount_ton,
+                    tx_hash=escrow.release_tx_hash,
+                )
+            elif refund_reason is not None:
+                notify_deal_refunded(
+                    db=db,
+                    settings=settings,
+                    deal=deal,
+                    refunded_amount_ton=escrow.refunded_amount_ton,
+                    tx_hash=escrow.refund_tx_hash,
+                    reason=refund_reason,
+                )
         except (DealTransitionError, PayoutError, TonTransferError) as exc:
             db.rollback()
-            logger.error("Verification processing failed", extra={"deal_id": deal.id, "error": str(exc)})
+            logger.error(
+                "Verification processing failed",
+                extra={"deal_id": deal.id, "error": str(exc)},
+            )
             continue
 
     return processed

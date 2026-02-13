@@ -16,7 +16,11 @@ from app.models.listing import Listing
 from app.models.listing_format import ListingFormat
 from app.models.user import User
 from app.schemas.channel import ChannelRole
-from app.schemas.deals import DealCreateFromListing, DealCreativeUploadResponse, DealSummary
+from app.schemas.deals import (
+    DealCreateFromListing,
+    DealCreativeUploadResponse,
+    DealSummary,
+)
 from app.schemas.listing import (
     ListingCreate,
     ListingFormatCreate,
@@ -25,6 +29,7 @@ from app.schemas.listing import (
     ListingSummary,
     ListingUpdate,
 )
+from app.services.bot_notifications import notify_listing_offer_received
 from app.settings import Settings
 from shared.telegram.bot_api import BotApiService
 from shared.telegram.errors import TelegramApiError, TelegramConfigError
@@ -37,40 +42,47 @@ ALLOWED_MEDIA_TYPES = {"image", "video"}
 def _load_channel(db: Session, channel_id: int) -> Channel:
     channel = db.exec(select(Channel).where(Channel.id == channel_id)).first()
     if channel is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Channel not found"
+        )
     return channel
 
 
 def _load_listing(db: Session, listing_id: int) -> Listing:
     listing = db.exec(select(Listing).where(Listing.id == listing_id)).first()
     if listing is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Listing not found"
+        )
     return listing
 
 
 def _load_listing_format(db: Session, format_id: int) -> ListingFormat:
-    listing_format = db.exec(select(ListingFormat).where(ListingFormat.id == format_id)).first()
+    listing_format = db.exec(
+        select(ListingFormat).where(ListingFormat.id == format_id)
+    ).first()
     if listing_format is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Format not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Format not found"
+        )
     return listing_format
 
 
-def _require_owner_membership(db: Session, *, channel_id: int, user_id: int | None) -> None:
+def _require_owner_membership(
+    db: Session, *, channel_id: int, user_id: int | None
+) -> None:
     if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only channel owners may manage listings",
         )
 
-    membership = (
-        db.exec(
-            select(ChannelMember)
-            .where(ChannelMember.channel_id == channel_id)
-            .where(ChannelMember.user_id == user_id)
-            .where(ChannelMember.role == ChannelRole.owner.value)
-        )
-        .first()
-    )
+    membership = db.exec(
+        select(ChannelMember)
+        .where(ChannelMember.channel_id == channel_id)
+        .where(ChannelMember.user_id == user_id)
+        .where(ChannelMember.role == ChannelRole.owner.value)
+    ).first()
     if membership is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -88,14 +100,19 @@ def _require_listing_owner(listing: Listing, user_id: int | None) -> None:
 
 def _require_non_empty(value: str | None, *, field: str) -> str:
     if value is None or not value.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}"
+        )
     return value.strip()
 
 
 def _require_media_type(value: str | None) -> str:
     normalized = _require_non_empty(value, field="creative_media_type")
     if normalized not in ALLOWED_MEDIA_TYPES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid creative_media_type")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid creative_media_type",
+        )
     return normalized
 
 
@@ -165,10 +182,16 @@ def create_listing(
         db.commit()
     except IntegrityError:
         db.rollback()
-        existing = db.exec(select(Listing).where(Listing.channel_id == channel.id)).first()
+        existing = db.exec(
+            select(Listing).where(Listing.channel_id == channel.id)
+        ).first()
         if existing is not None:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Listing already exists")
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Listing conflict")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Listing already exists"
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Listing conflict"
+        )
 
     db.refresh(listing)
     return ListingSummary(
@@ -208,7 +231,11 @@ def update_listing(
     )
 
 
-@router.post("/{listing_id}/formats", response_model=ListingFormatSummary, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{listing_id}/formats",
+    response_model=ListingFormatSummary,
+    status_code=status.HTTP_201_CREATED,
+)
 def create_listing_format(
     listing_id: int,
     payload: ListingFormatCreate,
@@ -231,7 +258,9 @@ def create_listing_format(
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Format terms already exist")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Format terms already exist"
+        )
 
     db.refresh(listing_format)
     return ListingFormatSummary(
@@ -257,7 +286,9 @@ def update_listing_format(
 
     listing_format = _load_listing_format(db, format_id)
     if listing_format.listing_id != listing.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Format not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Format not found"
+        )
 
     if (
         payload.placement_type is None
@@ -265,7 +296,9 @@ def update_listing_format(
         and payload.retention_hours is None
         and payload.price is None
     ):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update"
+        )
 
     if payload.placement_type is not None:
         listing_format.placement_type = payload.placement_type
@@ -281,7 +314,9 @@ def update_listing_format(
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Format terms already exist")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Format terms already exist"
+        )
 
     db.refresh(listing_format)
     return ListingFormatSummary(
@@ -304,7 +339,9 @@ def upload_listing_creative_media(
 ) -> DealCreativeUploadResponse:
     listing = _load_listing(db, listing_id)
     if not listing.is_active:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Listing is inactive")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Listing is inactive"
+        )
 
     content_type = file.content_type or ""
     if content_type.startswith("image/"):
@@ -312,11 +349,16 @@ def upload_listing_creative_media(
     elif content_type.startswith("video/"):
         media_type = "video"
     else:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid creative_media_type")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid creative_media_type",
+        )
 
     content = file.file.read()
     if not content:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty upload")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Empty upload"
+        )
 
     service = BotApiService(settings)
     try:
@@ -326,7 +368,9 @@ def upload_listing_creative_media(
             content=content,
         )
     except (TelegramApiError, TelegramConfigError) as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to upload media") from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to upload media"
+        ) from exc
 
     return DealCreativeUploadResponse(
         creative_media_ref=result["file_id"],
@@ -334,24 +378,35 @@ def upload_listing_creative_media(
     )
 
 
-@router.post("/{listing_id}/deals", response_model=DealSummary, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{listing_id}/deals",
+    response_model=DealSummary,
+    status_code=status.HTTP_201_CREATED,
+)
 def create_deal_from_listing(
     listing_id: int,
     payload: DealCreateFromListing,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings_dep),
 ) -> DealSummary:
     listing = _load_listing(db, listing_id)
     if not listing.is_active:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Listing is inactive")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Listing is inactive"
+        )
 
     listing_format = _load_listing_format(db, payload.listing_format_id)
     if listing_format.listing_id != listing.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Format not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Format not found"
+        )
 
     creative_text = _require_non_empty(payload.creative_text, field="creative_text")
     creative_media_type = _require_media_type(payload.creative_media_type)
-    creative_media_ref = _require_non_empty(payload.creative_media_ref, field="creative_media_ref")
+    creative_media_ref = _require_non_empty(
+        payload.creative_media_ref, field="creative_media_ref"
+    )
     scheduled_at = _normalize_datetime(payload.start_at)
 
     deal = Deal(
@@ -398,7 +453,10 @@ def create_deal_from_listing(
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Deal conflict")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Deal conflict"
+        )
 
     db.refresh(deal)
+    notify_listing_offer_received(db=db, settings=settings, deal=deal)
     return _deal_summary(deal)

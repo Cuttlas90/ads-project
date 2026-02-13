@@ -3,19 +3,36 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from app.api.deps import get_current_user, get_db, get_settings_dep
-from app.domain.escrow_fsm import EscrowState, EscrowTransitionError, apply_escrow_transition
+from app.domain.escrow_fsm import (
+    EscrowState,
+    EscrowTransitionError,
+    apply_escrow_transition,
+)
 from app.models.channel import Channel
 from app.models.deal import Deal, DealSourceType, DealState
 from app.models.deal_escrow import DealEscrow
 from app.models.deal_event import DealEvent
 from app.models.escrow_event import EscrowEvent
 from app.models.user import User
-from app.schemas.escrow import EscrowInitResponse, EscrowStatusResponse, TonConnectTxResponse
+from app.schemas.escrow import (
+    EscrowInitResponse,
+    EscrowStatusResponse,
+    TonConnectTxResponse,
+)
 from app.schemas.deals import (
     DealCreativeSubmit,
     DealCreativeUploadResponse,
@@ -29,7 +46,13 @@ from app.schemas.deals import (
     DealTimelinePage,
     DealUpdate,
 )
-from app.services.deal_fsm import DealAction, DealActorRole, DealTransitionError, apply_transition
+from app.services.deal_fsm import (
+    DealAction,
+    DealActorRole,
+    DealTransitionError,
+    apply_transition,
+)
+from app.services.bot_notifications import notify_deal_offer_accepted
 from app.services.ton.addressing import to_raw_address
 from app.services.ton.errors import TonConfigError
 from app.services.ton.tonconnect import build_tonconnect_transaction
@@ -83,7 +106,9 @@ def _deal_summary(deal: Deal) -> DealSummary:
 def _load_deal(db: Session, deal_id: int) -> Deal:
     deal = db.exec(select(Deal).where(Deal.id == deal_id)).first()
     if deal is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deal not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Deal not found"
+        )
     return deal
 
 
@@ -93,7 +118,9 @@ def _load_escrow(db: Session, deal_id: int) -> DealEscrow | None:
 
 def _require_actor_role(deal: Deal, user_id: int | None) -> str:
     if user_id is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized"
+        )
     if user_id == deal.advertiser_id:
         return DealActorRole.advertiser.value
     if user_id == deal.channel_owner_id:
@@ -103,31 +130,45 @@ def _require_actor_role(deal: Deal, user_id: int | None) -> str:
 
 def _require_advertiser(deal: Deal, user_id: int | None) -> None:
     if user_id is None or user_id != deal.advertiser_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only advertiser may perform this action")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only advertiser may perform this action",
+        )
 
 
 def _require_non_empty(value: str | None, *, field: str) -> str:
     if value is None or not value.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}"
+        )
     return value.strip()
 
 
 def _require_media_type(value: str | None) -> str:
     normalized = _require_non_empty(value, field="creative_media_type")
     if normalized not in ALLOWED_MEDIA_TYPES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid creative_media_type")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid creative_media_type",
+        )
     return normalized
 
 
-def _parse_int(value: str | None, *, field: str, minimum: int | None = None) -> int | None:
+def _parse_int(
+    value: str | None, *, field: str, minimum: int | None = None
+) -> int | None:
     if value is None:
         return None
     try:
         parsed = int(value)
     except (TypeError, ValueError):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}"
+        )
     if minimum is not None and parsed < minimum:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid {field}"
+        )
     return parsed
 
 
@@ -148,21 +189,29 @@ def _encode_cursor(created_at: datetime, source: str, event_id: int) -> str:
 def _decode_cursor(raw: str) -> tuple[datetime, int, int]:
     parts = raw.split("|")
     if len(parts) != 3:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor"
+        )
     raw_ts, source, raw_id = parts
     try:
         timestamp = datetime.fromisoformat(raw_ts)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor"
+        ) from exc
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=timezone.utc)
     source_key = CURSOR_SOURCE_ORDER.get(source)
     if source_key is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor"
+        )
     try:
         event_id = int(raw_id)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cursor"
+        ) from exc
     return timestamp, source_key, event_id
 
 
@@ -172,9 +221,13 @@ def _validate_price(value: Decimal | None) -> Decimal | None:
     try:
         normalized = Decimal(value)
     except (InvalidOperation, TypeError):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid price_ton")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid price_ton"
+        )
     if normalized < 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid price_ton")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid price_ton"
+        )
     return normalized
 
 
@@ -184,7 +237,11 @@ def _serialize_payload(payload: dict) -> dict:
         if isinstance(value, Decimal):
             serialized[key] = str(value)
         elif isinstance(value, datetime):
-            normalized = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+            normalized = (
+                value
+                if value.tzinfo is not None
+                else value.replace(tzinfo=timezone.utc)
+            )
             serialized[key] = normalized.isoformat()
         else:
             serialized[key] = value
@@ -192,27 +249,33 @@ def _serialize_payload(payload: dict) -> dict:
 
 
 def _latest_proposal_actor(db: Session, deal_id: int) -> int | None:
-    event = (
-        db.exec(
-            select(DealEvent)
-            .where(DealEvent.deal_id == deal_id)
-            .where(DealEvent.event_type == "proposal")
-            .order_by(DealEvent.created_at.desc(), DealEvent.id.desc())
-        )
-        .first()
-    )
+    event = db.exec(
+        select(DealEvent)
+        .where(DealEvent.deal_id == deal_id)
+        .where(DealEvent.event_type == "proposal")
+        .order_by(DealEvent.created_at.desc(), DealEvent.id.desc())
+    ).first()
     return event.actor_id if event else None
 
 
-def _require_latest_proposal_counterparty(db: Session, deal: Deal, actor_id: int | None, *, action: str) -> None:
+def _require_latest_proposal_counterparty(
+    db: Session, deal: Deal, actor_id: int | None, *, action: str
+) -> None:
     if actor_id is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized"
+        )
 
     last_actor_id = _latest_proposal_actor(db, deal.id)
     if last_actor_id is None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"No proposal to {action}")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=f"No proposal to {action}"
+        )
     if last_actor_id == actor_id:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Cannot {action} your own proposal")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot {action} your own proposal",
+        )
 
 
 def _build_proposal_snapshot(deal: Deal) -> dict[str, object]:
@@ -232,18 +295,25 @@ def _build_proposal_snapshot(deal: Deal) -> dict[str, object]:
     )
 
 
-def _upload_media_to_telegram(*, file: UploadFile, settings: Settings) -> DealCreativeUploadResponse:
+def _upload_media_to_telegram(
+    *, file: UploadFile, settings: Settings
+) -> DealCreativeUploadResponse:
     content_type = file.content_type or ""
     if content_type.startswith("image/"):
         media_type = "image"
     elif content_type.startswith("video/"):
         media_type = "video"
     else:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid creative_media_type")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid creative_media_type",
+        )
 
     content = file.file.read()
     if not content:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty upload")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Empty upload"
+        )
 
     service = BotApiService(settings)
     try:
@@ -253,7 +323,9 @@ def _upload_media_to_telegram(*, file: UploadFile, settings: Settings) -> DealCr
             content=content,
         )
     except (TelegramApiError, TelegramConfigError) as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to upload media") from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to upload media"
+        ) from exc
 
     return DealCreativeUploadResponse(
         creative_media_ref=result["file_id"],
@@ -267,7 +339,9 @@ def _known_proposal_media_refs(db: Session, deal: Deal) -> set[str]:
         known_refs.add(deal.creative_media_ref)
 
     proposal_payloads = db.exec(
-        select(DealEvent.payload).where(DealEvent.deal_id == deal.id).where(DealEvent.event_type == "proposal")
+        select(DealEvent.payload)
+        .where(DealEvent.deal_id == deal.id)
+        .where(DealEvent.event_type == "proposal")
     ).all()
     for payload in proposal_payloads:
         if not isinstance(payload, dict):
@@ -290,10 +364,15 @@ def list_deals(
     state = params.get("state")
 
     page = _parse_int(params.get("page"), field="page", minimum=1) or DEFAULT_PAGE
-    page_size = _parse_int(params.get("page_size"), field="page_size", minimum=1) or DEFAULT_PAGE_SIZE
+    page_size = (
+        _parse_int(params.get("page_size"), field="page_size", minimum=1)
+        or DEFAULT_PAGE_SIZE
+    )
 
     if role not in {None, "owner", "advertiser"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role"
+        )
 
     if current_user.id is None:
         return DealInboxPage(page=page, page_size=page_size, total=0, items=[])
@@ -403,7 +482,10 @@ def list_deal_events(
     _require_actor_role(deal, current_user.id)
 
     params = request.query_params
-    limit = _parse_int(params.get("limit"), field="limit", minimum=1) or DEFAULT_TIMELINE_LIMIT
+    limit = (
+        _parse_int(params.get("limit"), field="limit", minimum=1)
+        or DEFAULT_TIMELINE_LIMIT
+    )
     cursor_raw = params.get("cursor")
     cursor_key = _decode_cursor(cursor_raw) if cursor_raw else None
 
@@ -411,7 +493,9 @@ def list_deal_events(
     escrow_events: list[EscrowEvent] = []
     escrow = _load_escrow(db, deal.id)
     if escrow is not None:
-        escrow_events = db.exec(select(EscrowEvent).where(EscrowEvent.escrow_id == escrow.id)).all()
+        escrow_events = db.exec(
+            select(EscrowEvent).where(EscrowEvent.escrow_id == escrow.id)
+        ).all()
 
     merged: list[dict] = []
     for event in deal_events:
@@ -460,13 +544,16 @@ def list_deal_events(
         merged = [
             item
             for item in merged
-            if (item["created_at"], CURSOR_SOURCE_ORDER[item["source"]], item["id"]) < cursor_key
+            if (item["created_at"], CURSOR_SOURCE_ORDER[item["source"]], item["id"])
+            < cursor_key
         ]
 
     next_cursor = None
     if len(merged) > limit:
         last_item = merged[limit - 1]
-        next_cursor = _encode_cursor(last_item["created_at"], last_item["source"], last_item["id"])
+        next_cursor = _encode_cursor(
+            last_item["created_at"], last_item["source"], last_item["id"]
+        )
         merged = merged[:limit]
 
     items = [
@@ -495,7 +582,9 @@ def update_deal(
     actor_role = _require_actor_role(deal, current_user.id)
 
     if deal.state not in NEGOTIATION_STATES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deal cannot be updated")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Deal cannot be updated"
+        )
     _require_latest_proposal_counterparty(db, deal, current_user.id, action="edit")
 
     updates: dict[str, object] = {}
@@ -517,28 +606,46 @@ def update_deal(
     if payload.retention_hours is not None:
         updates["retention_hours"] = payload.retention_hours
     if payload.creative_text is not None:
-        updates["creative_text"] = _require_non_empty(payload.creative_text, field="creative_text")
+        updates["creative_text"] = _require_non_empty(
+            payload.creative_text, field="creative_text"
+        )
     if payload.creative_media_type is not None:
-        updates["creative_media_type"] = _require_media_type(payload.creative_media_type)
+        updates["creative_media_type"] = _require_media_type(
+            payload.creative_media_type
+        )
     if payload.creative_media_ref is not None:
-        updates["creative_media_ref"] = _require_non_empty(payload.creative_media_ref, field="creative_media_ref")
+        updates["creative_media_ref"] = _require_non_empty(
+            payload.creative_media_ref, field="creative_media_ref"
+        )
     if payload.posting_params is not None:
         updates["posting_params"] = payload.posting_params
 
     if not updates:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update"
+        )
 
-    if {"placement_type", "exclusive_hours", "retention_hours"}.intersection(updates.keys()):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Placement terms are locked")
+    if {"placement_type", "exclusive_hours", "retention_hours"}.intersection(
+        updates.keys()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Placement terms are locked"
+        )
 
     if deal.source_type == DealSourceType.LISTING.value:
         if "price_ton" in updates or "ad_type" in updates:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Price and ad type are locked")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Price and ad type are locked",
+            )
     elif deal.source_type == DealSourceType.CAMPAIGN.value:
         if actor_role == DealActorRole.channel_owner.value:
             forbidden = {"price_ton", "ad_type"}
             if forbidden.intersection(updates.keys()):
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only advertiser can edit price or ad type")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only advertiser can edit price or ad type",
+                )
 
     for field, value in updates.items():
         setattr(deal, field, value)
@@ -566,7 +673,9 @@ def update_deal(
             )
         except DealTransitionError as exc:
             db.rollback()
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
 
     db.commit()
     db.refresh(deal)
@@ -578,12 +687,15 @@ def accept_deal(
     deal_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    settings: Settings = Depends(get_settings_dep),
 ) -> DealSummary:
     deal = _load_deal(db, deal_id)
     actor_role = _require_actor_role(deal, current_user.id)
 
     if deal.state not in NEGOTIATION_STATES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deal cannot be accepted")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Deal cannot be accepted"
+        )
     _require_latest_proposal_counterparty(db, deal, current_user.id, action="accept")
 
     try:
@@ -597,10 +709,15 @@ def accept_deal(
         )
     except DealTransitionError as exc:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
     db.commit()
     db.refresh(deal)
+    notify_deal_offer_accepted(
+        db=db, settings=settings, deal=deal, accepted_by_role=actor_role
+    )
     return _deal_summary(deal)
 
 
@@ -614,7 +731,9 @@ def reject_deal(
     actor_role = _require_actor_role(deal, current_user.id)
 
     if deal.state not in NEGOTIATION_STATES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deal cannot be rejected")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Deal cannot be rejected"
+        )
     _require_latest_proposal_counterparty(db, deal, current_user.id, action="reject")
 
     try:
@@ -628,7 +747,9 @@ def reject_deal(
         )
     except DealTransitionError as exc:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
     db.commit()
     db.refresh(deal)
@@ -645,14 +766,27 @@ def submit_creative(
     deal = _load_deal(db, deal_id)
     actor_role = _require_actor_role(deal, current_user.id)
     if actor_role != DealActorRole.channel_owner.value:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only channel owner may submit creative")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only channel owner may submit creative",
+        )
 
-    if deal.state not in {DealState.ACCEPTED.value, DealState.CREATIVE_CHANGES_REQUESTED.value}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deal cannot accept creative")
+    if deal.state not in {
+        DealState.ACCEPTED.value,
+        DealState.CREATIVE_CHANGES_REQUESTED.value,
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Deal cannot accept creative",
+        )
 
-    deal.creative_text = _require_non_empty(payload.creative_text, field="creative_text")
+    deal.creative_text = _require_non_empty(
+        payload.creative_text, field="creative_text"
+    )
     deal.creative_media_type = _require_media_type(payload.creative_media_type)
-    deal.creative_media_ref = _require_non_empty(payload.creative_media_ref, field="creative_media_ref")
+    deal.creative_media_ref = _require_non_empty(
+        payload.creative_media_ref, field="creative_media_ref"
+    )
 
     try:
         apply_transition(
@@ -665,7 +799,9 @@ def submit_creative(
         )
     except DealTransitionError as exc:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
     db.commit()
     db.refresh(deal)
@@ -681,10 +817,16 @@ def approve_creative(
     deal = _load_deal(db, deal_id)
     actor_role = _require_actor_role(deal, current_user.id)
     if actor_role != DealActorRole.advertiser.value:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only advertiser may approve creative")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only advertiser may approve creative",
+        )
 
     if deal.state != DealState.CREATIVE_SUBMITTED.value:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deal is not awaiting approval")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Deal is not awaiting approval",
+        )
 
     try:
         apply_transition(
@@ -697,7 +839,9 @@ def approve_creative(
         )
     except DealTransitionError as exc:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
     db.commit()
     db.refresh(deal)
@@ -713,10 +857,16 @@ def request_creative_edits(
     deal = _load_deal(db, deal_id)
     actor_role = _require_actor_role(deal, current_user.id)
     if actor_role != DealActorRole.advertiser.value:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only advertiser may request edits")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only advertiser may request edits",
+        )
 
     if deal.state != DealState.CREATIVE_SUBMITTED.value:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deal is not awaiting approval")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Deal is not awaiting approval",
+        )
 
     try:
         apply_transition(
@@ -729,7 +879,9 @@ def request_creative_edits(
         )
     except DealTransitionError as exc:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
     db.commit()
     db.refresh(deal)
@@ -747,7 +899,10 @@ def upload_creative_media(
     deal = _load_deal(db, deal_id)
     actor_role = _require_actor_role(deal, current_user.id)
     if actor_role != DealActorRole.channel_owner.value:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only channel owner may upload creative")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only channel owner may upload creative",
+        )
 
     return _upload_media_to_telegram(file=file, settings=settings)
 
@@ -763,7 +918,10 @@ def upload_proposal_media(
     deal = _load_deal(db, deal_id)
     _require_actor_role(deal, current_user.id)
     if deal.state not in NEGOTIATION_STATES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deal is not open for proposal edits")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Deal is not open for proposal edits",
+        )
     _require_latest_proposal_counterparty(db, deal, current_user.id, action="edit")
 
     return _upload_media_to_telegram(file=file, settings=settings)
@@ -782,13 +940,17 @@ def get_proposal_media(
 
     normalized_media_ref = _require_non_empty(media_ref, field="media_ref")
     if normalized_media_ref not in _known_proposal_media_refs(db, deal):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Media not found"
+        )
 
     service = BotApiService(settings)
     try:
         content, content_type = service.download_file(file_id=normalized_media_ref)
     except (TelegramApiError, TelegramConfigError) as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to load media") from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to load media"
+        ) from exc
 
     return Response(
         content=content,
@@ -808,18 +970,30 @@ def init_escrow(
     _require_advertiser(deal, current_user.id)
 
     if deal.state != DealState.CREATIVE_APPROVED.value:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deal is not creative-approved")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Deal is not creative-approved",
+        )
 
     if deal.price_ton <= 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid deal price")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid deal price"
+        )
 
     if settings.TON_FEE_PERCENT is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="TON_FEE_PERCENT is not configured")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="TON_FEE_PERCENT is not configured",
+        )
 
     try:
-        deposit_details = resolve_deal_deposit_address(deal_id=deal.id, settings=settings)
+        deposit_details = resolve_deal_deposit_address(
+            deal_id=deal.id, settings=settings
+        )
     except TonConfigError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
 
     escrow = _load_escrow(db, deal.id)
     if escrow is None:
@@ -838,7 +1012,9 @@ def init_escrow(
         db.flush()
 
     if escrow.state == EscrowState.FAILED.value:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Escrow is in failed state")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Escrow is in failed state"
+        )
 
     if not escrow.deposit_address:
         escrow.deposit_address = deposit_details.friendly
@@ -853,9 +1029,15 @@ def init_escrow(
         escrow.escrow_network = deposit_details.network
 
     if not escrow.deposit_address:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Deposit address is missing")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Deposit address is missing",
+        )
     if not escrow.deposit_address_raw:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Deposit canonical address is missing")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Deposit canonical address is missing",
+        )
     db.add(escrow)
 
     if escrow.state == EscrowState.CREATED.value:
@@ -870,13 +1052,18 @@ def init_escrow(
             )
         except EscrowTransitionError as exc:
             db.rollback()
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
 
     db.commit()
     db.refresh(escrow)
 
     if not escrow.deposit_address:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Deposit address is missing")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Deposit address is missing",
+        )
 
     return EscrowInitResponse(
         escrow_id=escrow.id,
@@ -899,11 +1086,16 @@ def tonconnect_tx(
     _require_advertiser(deal, current_user.id)
 
     if deal.state != DealState.CREATIVE_APPROVED.value:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Deal is not creative-approved")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Deal is not creative-approved",
+        )
 
     escrow = _load_escrow(db, deal.id)
     if escrow is None or not escrow.deposit_address:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Escrow is not initialized")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Escrow is not initialized"
+        )
 
     try:
         payload = build_tonconnect_transaction(
@@ -912,7 +1104,9 @@ def tonconnect_tx(
             settings=settings,
         )
     except TonConfigError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
 
     return TonConnectTxResponse(escrow_id=escrow.id, deal_id=deal.id, payload=payload)
 
@@ -928,7 +1122,9 @@ def get_escrow_status(
 
     escrow = _load_escrow(db, deal.id)
     if escrow is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Escrow not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Escrow not found"
+        )
 
     return EscrowStatusResponse(
         state=escrow.state,
@@ -939,7 +1135,11 @@ def get_escrow_status(
     )
 
 
-@router.post("/{deal_id}/messages", response_model=DealMessageSummary, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{deal_id}/messages",
+    response_model=DealMessageSummary,
+    status_code=status.HTTP_201_CREATED,
+)
 def send_deal_message(
     deal_id: int,
     payload: DealMessageCreate,
@@ -950,14 +1150,23 @@ def send_deal_message(
     deal = _load_deal(db, deal_id)
     sender_role = _require_actor_role(deal, current_user.id)
     if deal.state not in NEGOTIATION_STATES:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Deal is not open for messaging")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Deal is not open for messaging",
+        )
 
     message_text = _require_non_empty(payload.text, field="text")
 
-    recipient_id = deal.channel_owner_id if sender_role == DealActorRole.advertiser.value else deal.advertiser_id
+    recipient_id = (
+        deal.channel_owner_id
+        if sender_role == DealActorRole.advertiser.value
+        else deal.advertiser_id
+    )
     recipient = db.exec(select(User).where(User.id == recipient_id)).first()
     if recipient is None or recipient.telegram_user_id is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recipient not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Recipient not found"
+        )
 
     event = DealEvent(
         deal_id=deal.id,
@@ -973,10 +1182,16 @@ def send_deal_message(
     try:
         service.send_message(chat_id=recipient.telegram_user_id, text=message_text)
     except (TelegramApiError, TelegramConfigError) as exc:
-        event.payload = {"text": message_text, "to_user_id": recipient.id, "delivery_error": str(exc)}
+        event.payload = {
+            "text": message_text,
+            "to_user_id": recipient.id,
+            "delivery_error": str(exc),
+        }
         db.add(event)
         db.commit()
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to deliver message") from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to deliver message"
+        ) from exc
 
     return DealMessageSummary(
         id=event.id,

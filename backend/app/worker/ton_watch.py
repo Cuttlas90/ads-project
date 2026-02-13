@@ -7,14 +7,23 @@ from decimal import Decimal
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.domain.escrow_fsm import EscrowState, EscrowTransitionError, apply_escrow_transition
+from app.domain.escrow_fsm import (
+    EscrowState,
+    EscrowTransitionError,
+    apply_escrow_transition,
+)
 from app.models.deal import Deal, DealState
 from app.models.deal_escrow import DealEscrow
 from app.models.deal_event import DealEvent
 from app.models.escrow_event import EscrowEvent
 from app.models.user import User
-from app.services.bot_notifications import notify_deal_funded
-from app.services.deal_fsm import DealAction, DealActorRole, DealTransitionError, apply_transition
+from app.services.bot_notifications import notify_deal_funded, notify_deal_refunded
+from app.services.deal_fsm import (
+    DealAction,
+    DealActorRole,
+    DealTransitionError,
+    apply_transition,
+)
 from app.services.ton.addressing import to_raw_address
 from app.services.ton.chain_scan import TonCenterAdapter, TonChainAdapter
 from app.services.ton.errors import TonConfigError
@@ -51,15 +60,12 @@ def _parse_start_at(value: object) -> datetime | None:
 
 
 def _latest_negotiated_start_at(db: Session, deal_id: int) -> datetime | None:
-    payload = (
-        db.exec(
-            select(DealEvent.payload)
-            .where(DealEvent.deal_id == deal_id)
-            .where(DealEvent.event_type == "proposal")
-            .order_by(DealEvent.created_at.desc(), DealEvent.id.desc())
-        )
-        .first()
-    )
+    payload = db.exec(
+        select(DealEvent.payload)
+        .where(DealEvent.deal_id == deal_id)
+        .where(DealEvent.event_type == "proposal")
+        .order_by(DealEvent.created_at.desc(), DealEvent.id.desc())
+    ).first()
     if not isinstance(payload, dict):
         return None
     return _parse_start_at(payload.get("start_at"))
@@ -206,7 +212,10 @@ def _process_escrow(
     if escrow.expected_amount_ton is None:
         return
 
-    if escrow.state not in {EscrowState.AWAITING_DEPOSIT.value, EscrowState.DEPOSIT_DETECTED.value}:
+    if escrow.state not in {
+        EscrowState.AWAITING_DEPOSIT.value,
+        EscrowState.DEPOSIT_DETECTED.value,
+    }:
         return
 
     deal = db.exec(select(Deal).where(Deal.id == escrow.deal_id)).first()
@@ -250,7 +259,9 @@ def _process_escrow(
         if amount_ton is None:
             continue
 
-        escrow.received_amount_ton = (escrow.received_amount_ton or Decimal("0")) + Decimal(amount_ton)
+        escrow.received_amount_ton = (
+            escrow.received_amount_ton or Decimal("0")
+        ) + Decimal(amount_ton)
         if tx_hash:
             escrow.deposit_tx_hash = tx_hash
         updated = True
@@ -322,7 +333,16 @@ def _process_escrow(
         return
 
     if deal.state == DealState.CREATIVE_APPROVED.value:
-        _timeout_close(db=db, escrow=escrow, deal=deal, settings=settings)
+        timed_out = _timeout_close(db=db, escrow=escrow, deal=deal, settings=settings)
+        if timed_out and deal.state == DealState.REFUNDED.value:
+            notify_deal_refunded(
+                db=db,
+                settings=settings,
+                deal=deal,
+                refunded_amount_ton=escrow.refunded_amount_ton,
+                tx_hash=escrow.refund_tx_hash,
+                reason="funding_timeout",
+            )
 
 
 @celery_app.task(name="app.worker.ton_watch.scan_escrows")
@@ -346,14 +366,19 @@ def scan_escrows() -> int:
         escrows = db.exec(
             select(DealEscrow).where(
                 DealEscrow.state.in_(
-                    [EscrowState.AWAITING_DEPOSIT.value, EscrowState.DEPOSIT_DETECTED.value]
+                    [
+                        EscrowState.AWAITING_DEPOSIT.value,
+                        EscrowState.DEPOSIT_DETECTED.value,
+                    ]
                 )
             )
         ).all()
 
         for escrow in escrows:
             try:
-                _process_escrow(db=db, escrow=escrow, adapter=adapter, settings=settings)
+                _process_escrow(
+                    db=db, escrow=escrow, adapter=adapter, settings=settings
+                )
             except (
                 IntegrityError,
                 TonConfigError,
@@ -362,7 +387,10 @@ def scan_escrows() -> int:
                 PayoutError,
                 ValueError,
             ) as exc:
-                logger.error("Escrow watch failed", extra={"escrow_id": escrow.id, "error": str(exc)})
+                logger.error(
+                    "Escrow watch failed",
+                    extra={"escrow_id": escrow.id, "error": str(exc)},
+                )
                 db.rollback()
                 continue
             else:

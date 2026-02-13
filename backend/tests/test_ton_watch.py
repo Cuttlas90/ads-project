@@ -27,7 +27,9 @@ class FakeAdapter:
         self._txs = txs
         self.confirmations = 0
 
-    def find_incoming_tx(self, address: str, min_amount: Decimal, since_lt: str | None) -> dict | None:
+    def find_incoming_tx(
+        self, address: str, min_amount: Decimal, since_lt: str | None
+    ) -> dict | None:
         since_value = int(since_lt) if since_lt is not None else None
         for tx in self._txs:
             lt_value = int(tx["lt"])
@@ -125,8 +127,20 @@ def test_watch_idempotent(monkeypatch) -> None:
     monkeypatch.setattr("app.worker.ton_watch.notify_deal_funded", _record_notify)
 
     txs = [
-        {"hash": "tx1", "lt": "1", "amount_ton": Decimal("5"), "utime": 1, "mc_block_seqno": 10},
-        {"hash": "tx2", "lt": "2", "amount_ton": Decimal("5"), "utime": 2, "mc_block_seqno": 11},
+        {
+            "hash": "tx1",
+            "lt": "1",
+            "amount_ton": Decimal("5"),
+            "utime": 1,
+            "mc_block_seqno": 10,
+        },
+        {
+            "hash": "tx2",
+            "lt": "2",
+            "amount_ton": Decimal("5"),
+            "utime": 2,
+            "mc_block_seqno": 11,
+        },
     ]
     adapter = FakeAdapter(txs)
     settings = Settings(_env_file=None, TON_CONFIRMATIONS_REQUIRED=3)
@@ -203,6 +217,7 @@ def test_watch_timeout_partial_funding_triggers_refund(monkeypatch) -> None:
     settings = Settings(_env_file=None, TON_CONFIRMATIONS_REQUIRED=3)
     adapter = FakeAdapter([])
     calls: list[int] = []
+    refund_notifications: list[int] = []
 
     def _fake_refund(*, escrow, **kwargs):
         calls.append(1)
@@ -212,6 +227,10 @@ def test_watch_timeout_partial_funding_triggers_refund(monkeypatch) -> None:
         return None
 
     monkeypatch.setattr("app.worker.ton_watch.ensure_refund", _fake_refund)
+    monkeypatch.setattr(
+        "app.worker.ton_watch.notify_deal_refunded",
+        lambda **kwargs: refund_notifications.append(1),
+    )
 
     with Session(engine) as session:
         escrow = _seed_escrow(
@@ -229,6 +248,7 @@ def test_watch_timeout_partial_funding_triggers_refund(monkeypatch) -> None:
         assert deal.state == DealState.REFUNDED.value
         assert escrow.refund_tx_hash == "tx_timeout_refund"
         assert calls == [1]
+        assert refund_notifications == [1]
 
     SQLModel.metadata.drop_all(engine)
 
@@ -256,7 +276,11 @@ def test_watch_timeout_uses_start_at_fallback_from_proposal() -> None:
                 deal_id=escrow.deal_id,
                 actor_id=None,
                 event_type="proposal",
-                payload={"start_at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()},
+                payload={
+                    "start_at": (
+                        datetime.now(timezone.utc) - timedelta(minutes=1)
+                    ).isoformat()
+                },
             )
         )
         session.commit()
@@ -283,7 +307,13 @@ def test_watch_uses_fsm_transition_helpers(monkeypatch) -> None:
 
     settings = Settings(_env_file=None, TON_CONFIRMATIONS_REQUIRED=3)
     txs = [
-        {"hash": "tx1", "lt": "1", "amount_ton": Decimal("10"), "utime": 1, "mc_block_seqno": 10},
+        {
+            "hash": "tx1",
+            "lt": "1",
+            "amount_ton": Decimal("10"),
+            "utime": 1,
+            "mc_block_seqno": 10,
+        },
     ]
     adapter = FakeAdapter(txs)
     adapter.confirmations = 3
@@ -296,7 +326,9 @@ def test_watch_uses_fsm_transition_helpers(monkeypatch) -> None:
     with Session(engine) as session:
         escrow = _seed_escrow(session)
         with pytest.raises(DealTransitionError):
-            _process_escrow(db=session, escrow=escrow, adapter=adapter, settings=settings)
+            _process_escrow(
+                db=session, escrow=escrow, adapter=adapter, settings=settings
+            )
         session.rollback()
 
         refreshed = session.exec(select(Deal).where(Deal.id == escrow.deal_id)).one()
