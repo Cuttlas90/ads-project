@@ -2,6 +2,7 @@
 
 ## Goal
 Build an MVP Telegram Mini App for an ads marketplace that connects channel owners and advertisers using an escrow-style deal flow.
+**App is on TON testnet currently**
 
 ## Short Project Overview
 

@@ -1,0 +1,85 @@
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    env_file:
+      - ../.env.prod
+    environment:
+      PYTHONPATH: /app
+    volumes:
+      - ../backend:/app
+      - ../shared:/app/shared
+    expose:
+      - "8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    command: celery -A app.worker.celery_app worker --loglevel=INFO
+    env_file:
+      - ../.env.prod
+    environment:
+      PYTHONPATH: /app
+    volumes:
+      - ../backend:/app
+      - ../shared:/app/shared
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  beat:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    command: celery -A app.worker.celery_app beat --loglevel=INFO
+    env_file:
+      - ../.env.prod
+    environment:
+      PYTHONPATH: /app
+    volumes:
+      - ../backend:/app
+      - ../shared:/app/shared
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  bot:
+    build:
+      context: ../bot
+      dockerfile: Dockerfile
+    command: python -m app.main
+    env_file:
+      - ../.env.prod
+    environment:
+      PYTHONPATH: /app
+    volumes:
+      - ../bot:/app
+      - ../shared:/app/shared
+    extra_hosts:
+    - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+
